@@ -1,0 +1,1409 @@
+{
+  "info": {
+    "name": "transaction-service - pago de crédito desde una cuenta",
+    "description": "Pago de un préstamo o de una tarjeta de crédito con cargo a una cuenta bancaria, coordinado por transaction-service con mensajes de Kafka: pago completado, cargo rechazado por la cuenta, pago rechazado por el crédito con devolución del cargo, repetición del pedido, validación y consultas. Todo va por el API Gateway (perfil dev, puerto 8080), que necesita Kafka, discovery-server, customer-service, product-service, account-service, credit-service y transaction-service arriba; ajusta baseUrl si corre en otra dirección. Corre la colección completa y en orden: cada carpeta usa la cuenta y los créditos de la primera. Cada corrida crea un cliente, una cuenta, créditos y operationId nuevos, así que se puede repetir sobre la misma base. Las peticiones \"Esperar el resultado\" se repiten solas hasta que el pago termina.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Cliente, cuenta y créditos (customer-service, account-service, credit-service)",
+      "description": "Lo que el pago necesita y transaction-service no guarda: un cliente con una cuenta de ahorro de 1000 soles, un préstamo personal de 5000 y una tarjeta de crédito con 100 de deuda.",
+      "item": [
+        {
+          "name": "01 Crear cliente PERSONAL STANDARD",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Documento nuevo en cada corrida: customer-service no admite documentos repetidos.",
+                  "pm.collectionVariables.set('document', String(Math.floor(10000000 + Math.random() * 90000000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('customerId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/customers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PERSONAL\",\n  \"profile\": \"STANDARD\",\n  \"documentType\": \"DNI\",\n  \"documentNumber\": \"{{document}}\",\n  \"name\": \"Ana Perez\"\n}"
+            }
+          }
+        },
+        {
+          "name": "02 Abrir cuenta de ahorro PEN con 1000",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created con saldo 1000', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().balance).to.eql(1000);",
+                  "});",
+                  "pm.collectionVariables.set('accountId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/accounts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product\": \"SAVINGS\",\n  \"currency\": \"PEN\",\n  \"primaryHolderId\": \"{{customerId}}\",\n  \"initialDeposit\": 1000\n}"
+            }
+          }
+        },
+        {
+          "name": "03 Abrir préstamo personal de 5000",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created con deuda 5000', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().outstandingDebt).to.eql(5000);",
+                  "});",
+                  "pm.collectionVariables.set('loanId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/credits",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"type\": \"PERSONAL_LOAN\",\n  \"currency\": \"PEN\",\n  \"principal\": 5000,\n  \"paymentDueDay\": 5\n}"
+            }
+          }
+        },
+        {
+          "name": "04 Abrir tarjeta de crédito con límite 1000",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('cardId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/credits",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"type\": \"CREDIT_CARD\",\n  \"currency\": \"PEN\",\n  \"creditLimit\": 1000,\n  \"paymentDueDay\": 15\n}"
+            }
+          }
+        },
+        {
+          "name": "05 Consumir 100 con la tarjeta",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created con deuda 100', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().outstandingDebtAfter).to.eql(100);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/credits/{{cardId}}/charges",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"amount\": 100,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Pago completado",
+      "description": "transaction-service responde 202 en cuanto guarda el pedido y lo coordina por Kafka: pide el cargo a account-service y, con el cargo hecho, el pago a credit-service. El resultado se lee en la transacción. El operationId del pedido es el ID de la transacción, así que repetirlo no mueve dinero otra vez.",
+      "item": [
+        {
+          "name": "06 Pedir el pago de 150 del préstamo",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('paymentOperationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('operationId', pm.collectionVariables.get('paymentOperationId'));",
+                  "pm.collectionVariables.set('correlationId', 'postman-' + Date.now());",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted, pendiente del cargo', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('paymentOperationId'));",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(body.amount).to.eql(150);",
+                  "  pm.expect(body.description).to.eql('Cuota de noviembre');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/transactions/' + body.id);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});",
+                  "pm.test('La respuesta devuelve el X-Correlation-ID recibido', () => {",
+                  "  pm.expect(pm.response.headers.get('X-Correlation-ID')).to.eql(pm.collectionVariables.get('correlationId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "{{correlationId}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{paymentOperationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 150,\n  \"currency\": \"PEN\",\n  \"description\": \"Cuota de noviembre\"\n}"
+            }
+          }
+        },
+        {
+          "name": "07 Esperar el resultado: COMPLETED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('COMPLETED: saldo 850, deuda 4850, sin comisión', () => {",
+                  "    pm.expect(body.status).to.eql('COMPLETED');",
+                  "    pm.expect(body.fee).to.eql(0);",
+                  "    pm.expect(body.accountBalanceAfter).to.eql(850);",
+                  "    pm.expect(body.debtAfter).to.eql(4850);",
+                  "    pm.expect(body).to.not.have.any.keys('rejection', 'reversalFailure');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "08 Saldo de la cuenta: 850",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 850', () => pm.expect(body.balance).to.eql(850));",
+                  "pm.test('Movimientos del mes usados: 1', () => {",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/balance"
+          }
+        },
+        {
+          "name": "09 Deuda del préstamo: 4850",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Deuda 4850', () => {",
+                  "  pm.expect(pm.response.json().outstandingDebt).to.eql(4850);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/credits/{{loanId}}/debt"
+          }
+        },
+        {
+          "name": "10 Repetir el pedido (202, Idempotent-Replayed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 con la misma transacción, ya COMPLETED', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('paymentOperationId'));",
+                  "  pm.expect(body.status).to.eql('COMPLETED');",
+                  "  pm.expect(body.debtAfter).to.eql(4850);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{paymentOperationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 150,\n  \"currency\": \"PEN\",\n  \"description\": \"Cuota de noviembre\"\n}"
+            }
+          }
+        },
+        {
+          "name": "11 Misma clave con otro monto (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 OPERATION_ID_CONFLICT', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().code).to.eql('OPERATION_ID_CONFLICT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{paymentOperationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 99,\n  \"currency\": \"PEN\",\n  \"description\": \"Cuota de noviembre\"\n}"
+            }
+          }
+        },
+        {
+          "name": "12 La cuenta se cargó una sola vez",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 850', () => pm.expect(body.balance).to.eql(850));",
+                  "pm.test('Movimientos del mes usados: 1', () => {",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/balance"
+          }
+        },
+        {
+          "name": "13 La deuda se descontó una sola vez",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Deuda 4850', () => {",
+                  "  pm.expect(pm.response.json().outstandingDebt).to.eql(4850);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/credits/{{loanId}}/debt"
+          }
+        },
+        {
+          "name": "14 Movimiento del cargo en la cuenta",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('El último movimiento es el retiro de 150 con la descripción del pago', () => {",
+                  "  const last = pm.response.json().items[0];",
+                  "  pm.expect(last.type).to.eql('WITHDRAWAL');",
+                  "  pm.expect(last.amount).to.eql(150);",
+                  "  pm.expect(last.description).to.eql('Cuota de noviembre');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/movements?size=10"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. La cuenta rechaza el cargo",
+      "description": "Si account-service no puede cargar la cuenta, el pago termina REJECTED con el paso DEBIT y el mismo código que daría un retiro por REST. Nada se le pide a credit-service y no se mueve dinero.",
+      "item": [
+        {
+          "name": "15 Pedir 3000 con 850 en la cuenta",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted, pendiente del cargo', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('operationId'));",
+                  "  pm.expect(body.type).to.eql('CREDIT_PAYMENT');",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/transactions/' + body.id);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 3000,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "16 Esperar el resultado: INSUFFICIENT_FUNDS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('REJECTED por la cuenta: INSUFFICIENT_FUNDS', () => {",
+                  "    pm.expect(body.status).to.eql('REJECTED');",
+                  "    pm.expect(body.rejection.step).to.eql('DEBIT');",
+                  "    pm.expect(body.rejection.code).to.eql('INSUFFICIENT_FUNDS');",
+                  "    pm.expect(body.rejection.message).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body).to.not.have.any.keys('fee', 'accountBalanceAfter', 'debtAfter');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "17 Pedir un pago en USD desde una cuenta en PEN",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted, pendiente del cargo', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('operationId'));",
+                  "  pm.expect(body.type).to.eql('CREDIT_PAYMENT');",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/transactions/' + body.id);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 10,\n  \"currency\": \"USD\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18 Esperar el resultado: CURRENCY_MISMATCH",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('REJECTED por la cuenta: CURRENCY_MISMATCH', () => {",
+                  "    pm.expect(body.status).to.eql('REJECTED');",
+                  "    pm.expect(body.rejection.step).to.eql('DEBIT');",
+                  "    pm.expect(body.rejection.code).to.eql('CURRENCY_MISMATCH');",
+                  "    pm.expect(body.rejection.message).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body).to.not.have.any.keys('fee', 'accountBalanceAfter', 'debtAfter');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "19 Pedir un pago desde una cuenta que no existe",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted, pendiente del cargo', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('operationId'));",
+                  "  pm.expect(body.type).to.eql('CREDIT_PAYMENT');",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/transactions/' + body.id);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{$guid}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 10,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "20 Esperar el resultado: ACCOUNT_NOT_FOUND",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('REJECTED por la cuenta: ACCOUNT_NOT_FOUND', () => {",
+                  "    pm.expect(body.status).to.eql('REJECTED');",
+                  "    pm.expect(body.rejection.step).to.eql('DEBIT');",
+                  "    pm.expect(body.rejection.code).to.eql('ACCOUNT_NOT_FOUND');",
+                  "    pm.expect(body.rejection.message).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body).to.not.have.any.keys('fee', 'accountBalanceAfter', 'debtAfter');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "21 El saldo no cambió",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 850', () => pm.expect(body.balance).to.eql(850));",
+                  "pm.test('Movimientos del mes usados: 1', () => {",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/balance"
+          }
+        },
+        {
+          "name": "22 La deuda no cambió",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Deuda 4850', () => {",
+                  "  pm.expect(pm.response.json().outstandingDebt).to.eql(4850);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/credits/{{loanId}}/debt"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. El crédito rechaza el pago: se devuelve el cargo",
+      "description": "Cuando la cuenta ya fue cargada y credit-service rechaza el pago, transaction-service pide a account-service la reversa: un movimiento REVERSAL que devuelve el monto y la comisión. El pago termina REVERSED con el motivo del rechazo. El retiro revertido sigue contando en la cuota mensual de la cuenta.",
+      "item": [
+        {
+          "name": "23 Pedir 300 a la tarjeta con 100 de deuda",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted, pendiente del cargo', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('operationId'));",
+                  "  pm.expect(body.type).to.eql('CREDIT_PAYMENT');",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/transactions/' + body.id);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{cardId}}\",\n  \"amount\": 300,\n  \"currency\": \"PEN\",\n  \"description\": \"Pago de tarjeta\"\n}"
+            }
+          }
+        },
+        {
+          "name": "24 Esperar el resultado: REVERSED por PAYMENT_EXCEEDS_DEBT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('REVERSED: el crédito respondió PAYMENT_EXCEEDS_DEBT y el cargo volvió a la cuenta', () => {",
+                  "    pm.expect(body.status).to.eql('REVERSED');",
+                  "    pm.expect(body.rejection.step).to.eql('PAYMENT');",
+                  "    pm.expect(body.rejection.code).to.eql('PAYMENT_EXCEEDS_DEBT');",
+                  "    pm.expect(body.accountBalanceAfter).to.eql(850);",
+                  "    pm.expect(body).to.not.have.any.keys('debtAfter', 'reversalFailure');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "25 El saldo volvió a 850",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 850', () => pm.expect(body.balance).to.eql(850));",
+                  "pm.test('Movimientos del mes usados: 2', () => {",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/balance"
+          }
+        },
+        {
+          "name": "26 Retiro y reversa en los movimientos de la cuenta",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('REVERSAL de 300 después del WITHDRAWAL de 300', () => {",
+                  "  const items = pm.response.json().items;",
+                  "  pm.expect(items[0].type).to.eql('REVERSAL');",
+                  "  pm.expect(items[0].amount).to.eql(300);",
+                  "  pm.expect(items[1].type).to.eql('WITHDRAWAL');",
+                  "  pm.expect(items[1].amount).to.eql(300);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/movements?size=10"
+          }
+        },
+        {
+          "name": "27 La deuda de la tarjeta sigue en 100",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Deuda 100', () => {",
+                  "  pm.expect(pm.response.json().outstandingDebt).to.eql(100);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/credits/{{cardId}}/debt"
+          }
+        },
+        {
+          "name": "28 Pedir un pago a un crédito que no existe",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted, pendiente del cargo', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('operationId'));",
+                  "  pm.expect(body.type).to.eql('CREDIT_PAYMENT');",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/transactions/' + body.id);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{$guid}}\",\n  \"amount\": 10,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "29 Esperar el resultado: REVERSED por CREDIT_NOT_FOUND",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('REVERSED: el crédito respondió CREDIT_NOT_FOUND y el cargo volvió a la cuenta', () => {",
+                  "    pm.expect(body.status).to.eql('REVERSED');",
+                  "    pm.expect(body.rejection.step).to.eql('PAYMENT');",
+                  "    pm.expect(body.rejection.code).to.eql('CREDIT_NOT_FOUND');",
+                  "    pm.expect(body.accountBalanceAfter).to.eql(850);",
+                  "    pm.expect(body).to.not.have.any.keys('debtAfter', 'reversalFailure');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "30 El saldo sigue en 850",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 850', () => pm.expect(body.balance).to.eql(850));",
+                  "pm.test('Movimientos del mes usados: 3', () => {",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(3);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/balance"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Validación y consultas",
+      "description": "Lo que el contrato rechaza antes de guardar nada, y las consultas de transacciones: por ID y la lista paginada, de la más reciente a la más antigua, con filtros por cuenta, crédito y estado.",
+      "item": [
+        {
+          "name": "31 Monto con tres decimales (400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 10.555,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "32 Monto cero (400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 0,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "33 Moneda que el banco no opera (400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 10,\n  \"currency\": \"EUR\"\n}"
+            }
+          }
+        },
+        {
+          "name": "34 Sin cuenta (400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 10,\n  \"currency\": \"PEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "35 Campo que no es del contrato (400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 10,\n  \"currency\": \"PEN\",\n  \"status\": \"COMPLETED\"\n}"
+            }
+          }
+        },
+        {
+          "name": "36 Transacción que no existe (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 TRANSACTION_NOT_FOUND con el identificador de correlación', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.code).to.eql('TRANSACTION_NOT_FOUND');",
+                  "  pm.expect(body.traceId).to.eql('postman-not-found');",
+                  "  pm.expect(pm.response.headers.get('X-Correlation-ID')).to.eql('postman-not-found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-not-found"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/{{$guid}}"
+          }
+        },
+        {
+          "name": "37 Transacciones de la cuenta, de la más reciente a la más antigua",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Cinco transacciones de la cuenta en orden', () => {",
+                  "  pm.expect(body.totalElements).to.eql(5);",
+                  "  pm.expect(body.items.map(t => t.status)).to.eql(",
+                  "    ['REVERSED', 'REVERSED', 'REJECTED', 'REJECTED', 'COMPLETED']);",
+                  "  pm.expect(body.items[4].id).to.eql(pm.collectionVariables.get('paymentOperationId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions?accountId={{accountId}}"
+          }
+        },
+        {
+          "name": "38 Pagos completados del préstamo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Solo el pago de 150', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.totalElements).to.eql(1);",
+                  "  pm.expect(body.items[0].amount).to.eql(150);",
+                  "  pm.expect(body.items[0].debtAfter).to.eql(4850);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions?creditId={{loanId}}&status=COMPLETED"
+          }
+        },
+        {
+          "name": "39 Página de dos transacciones",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Segunda página de tres', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.page).to.eql(1);",
+                  "  pm.expect(body.size).to.eql(2);",
+                  "  pm.expect(body.totalPages).to.eql(3);",
+                  "  pm.expect(body.items.length).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions?accountId={{accountId}}&page=1&size=2"
+          }
+        },
+        {
+          "name": "40 Tamaño de página fuera de rango (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions?size=101"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "document",
+      "value": ""
+    },
+    {
+      "key": "customerId",
+      "value": ""
+    },
+    {
+      "key": "accountId",
+      "value": ""
+    },
+    {
+      "key": "loanId",
+      "value": ""
+    },
+    {
+      "key": "cardId",
+      "value": ""
+    },
+    {
+      "key": "operationId",
+      "value": ""
+    },
+    {
+      "key": "paymentOperationId",
+      "value": ""
+    },
+    {
+      "key": "correlationId",
+      "value": ""
+    },
+    {
+      "key": "pollCount",
+      "value": ""
+    }
+  ]
+}

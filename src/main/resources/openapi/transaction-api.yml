@@ -1,0 +1,417 @@
+openapi: 3.0.3
+info:
+  title: Transaction API
+  version: 1.0.0
+  description: |
+    API for operations that move money between products kept by different services. The first
+    one is the payment of a credit product (loan or credit card) from a bank account.
+
+    Transaction Service keeps no balances. It records what was asked and coordinates the two
+    services that own the money through the event broker:
+    1. Account Service debits the account. The debit is a normal withdrawal: it uses the monthly
+       quota of the account and pays the movement fee when the quota is used up.
+    2. Credit Service applies the payment to the credit product.
+    3. When Credit Service rejects the payment, Account Service returns the amount and the fee
+       to the account.
+
+    The request is answered at once with 202 and the transaction in PENDING_DEBIT. The result is
+    read with GET /api/v1/transactions/{transactionId}:
+    - COMPLETED: the account was debited and the credit product was paid.
+    - REJECTED: the account could not be debited. No money moved.
+    - REVERSED: the credit product rejected the payment and the debit was returned to the account.
+    - REVERSAL_FAILED: the credit product rejected the payment and the debit could not be
+      returned. The bank has to resolve it by hand.
+    - PENDING_DEBIT, PENDING_PAYMENT, PENDING_REVERSAL: still waiting for a service. A step that
+      gets no answer is sent again until it is answered; every step is idempotent, so a repeat
+      never moves money twice.
+
+    Amounts have at most two decimals. Instants are UTC.
+servers:
+  - url: /
+tags:
+  - name: Transactions
+    description: Requests to move money between products and their results.
+paths:
+  /api/v1/transactions/credit-payments:
+    post:
+      tags: [Transactions]
+      operationId: requestCreditPayment
+      summary: Pay a credit product from an account
+      description: |
+        Records the payment and starts it. The account and the credit product are not checked
+        here: the services that own them accept or reject their step, and the reason is read
+        from the transaction. See OperationId for idempotency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditPaymentRequest'
+            example:
+              operationId: 4a6c8e0b-2d4f-4b1a-9c3e-5f7a9b1c3d5e
+              accountId: 3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b
+              creditId: 8d7c6b5a-4f3e-4d2c-8b1a-0f9e8d7c6b5a
+              amount: 150.00
+              currency: PEN
+              description: November installment
+      responses:
+        '202':
+          description: |
+            The payment was recorded and is being processed, or it was already recorded with the
+            same data (then Idempotent-Replayed is true and the body is its current state).
+          headers:
+            Location:
+              description: Where to read the transaction.
+              schema:
+                type: string
+              example: /api/v1/transactions/4a6c8e0b-2d4f-4b1a-9c3e-5f7a9b1c3d5e
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/transactions/{transactionId}:
+    parameters:
+      - name: transactionId
+        in: path
+        required: true
+        description: The operationId the transaction was requested with.
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Transactions]
+      operationId: getTransaction
+      summary: Read a transaction and its result
+      responses:
+        '200':
+          description: The transaction in its current state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/transactions:
+    get:
+      tags: [Transactions]
+      operationId: listTransactions
+      summary: List transactions using bounded pagination
+      description: |
+        Newest first. Pages are not snapshots; out-of-range pages return empty items.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: accountId
+          in: query
+          description: Returns the transactions that debit this account.
+          schema:
+            type: string
+            format: uuid
+        - name: creditId
+          in: query
+          description: Returns the transactions that pay this credit product.
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TransactionStatus'
+      responses:
+        '200':
+          description: Transaction page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Zero-based page number.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        maximum: 10000
+        default: 0
+    Size:
+      name: size
+      in: query
+      description: Maximum number of items per page.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+  headers:
+    IdempotentReplayed:
+      description: Present with the value true when the request repeats a recorded transaction.
+      schema:
+        type: string
+        enum: ['true']
+  responses:
+    BadRequest:
+      description: Malformed JSON, invalid UUID, or invalid field or parameter.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INVALID_REQUEST
+            message: 'Invalid or missing fields: amount.'
+            timestamp: '2026-11-20T15:00:00Z'
+            path: /api/v1/transactions/credit-payments
+    NotFound:
+      description: The transaction does not exist (TRANSACTION_NOT_FOUND).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: TRANSACTION_NOT_FOUND
+            message: The transaction does not exist.
+            timestamp: '2026-11-20T15:00:00Z'
+            path: /api/v1/transactions/4a6c8e0b-2d4f-4b1a-9c3e-5f7a9b1c3d5e
+    OperationConflict:
+      description: |
+        The operationId already identifies a transaction with different data
+        (OPERATION_ID_CONFLICT).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: OPERATION_ID_CONFLICT
+            message: The operationId was already used with different data.
+            timestamp: '2026-11-20T15:00:00Z'
+            path: /api/v1/transactions/credit-payments
+    UnsupportedMediaType:
+      description: The request body is not application/json (UNSUPPORTED_MEDIA_TYPE).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Unexpected failure (INTERNAL_ERROR). The response never exposes internals.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    OperationId:
+      title: OperationId
+      type: string
+      format: uuid
+      description: |
+        Idempotency key generated by the client, one per intended payment. It becomes the ID of
+        the transaction, and the debit of the account and the payment of the credit product are
+        recorded under it in their services. Repeating the request with the same data returns
+        202 with the current state of the transaction and starts nothing new. The same key with
+        a different account, credit product, amount, currency or description returns 409
+        OPERATION_ID_CONFLICT.
+      example: 4a6c8e0b-2d4f-4b1a-9c3e-5f7a9b1c3d5e
+    CreditPaymentRequest:
+      title: CreditPaymentRequest
+      type: object
+      additionalProperties: false
+      required: [operationId, accountId, creditId, amount, currency]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        accountId:
+          type: string
+          format: uuid
+          description: Account the amount is taken from. It can belong to any customer.
+        creditId:
+          type: string
+          format: uuid
+          description: Loan or credit card that receives the payment.
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          x-field-extra-annotation: '@jakarta.validation.constraints.Digits(integer = 12, fraction = 2)'
+          description: Positive amount with at most two decimals.
+          example: 150.00
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        description:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: Free text recorded with the movements of the account and the credit product.
+          example: November installment
+    TransactionResponse:
+      title: TransactionResponse
+      type: object
+      required: [id, type, status, accountId, creditId, amount, currency, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The operationId of the request.
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        status:
+          $ref: '#/components/schemas/TransactionStatus'
+        accountId:
+          type: string
+          format: uuid
+        creditId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          example: 150.00
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        description:
+          type: string
+        fee:
+          type: number
+          description: |
+            Movement fee the account paid for the debit. Present once the account was debited;
+            a reversal returns it together with the amount.
+          example: 0.00
+        accountBalanceAfter:
+          type: number
+          description: |
+            Balance of the account after the last movement this transaction made on it: the
+            debit, or the reversal when there was one.
+          example: 350.00
+        debtAfter:
+          type: number
+          description: Outstanding debt of the credit product after the payment. Only when COMPLETED.
+          example: 850.00
+        rejection:
+          $ref: '#/components/schemas/Rejection'
+        reversalFailure:
+          $ref: '#/components/schemas/ReversalFailure'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the transaction last changed its status.
+    Rejection:
+      title: Rejection
+      type: object
+      description: Why the transaction did not complete. Present in REJECTED, PENDING_REVERSAL, REVERSED and REVERSAL_FAILED.
+      required: [step, code, message]
+      properties:
+        step:
+          $ref: '#/components/schemas/RejectedStep'
+        code:
+          type: string
+          description: Error code of the service that rejected its step, the same its own API answers.
+          example: INSUFFICIENT_FUNDS
+        message:
+          type: string
+          example: The balance does not cover the amount and the fee.
+    ReversalFailure:
+      title: ReversalFailure
+      type: object
+      description: Why the debit could not be returned to the account. Present in REVERSAL_FAILED.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: ACCOUNT_CLOSED
+        message:
+          type: string
+          example: The account is closed.
+    TransactionPageResponse:
+      title: TransactionPageResponse
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/TransactionResponse'
+        page:
+          type: integer
+          format: int32
+          example: 0
+        size:
+          type: integer
+          format: int32
+          example: 20
+        totalElements:
+          type: integer
+          format: int64
+          example: 1
+        totalPages:
+          type: integer
+          format: int64
+          description: Ceiling of totalElements divided by size; zero when there are no matches.
+          example: 1
+    ErrorResponse:
+      title: ErrorResponse
+      type: object
+      required: [code, message, timestamp, path]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error identifier.
+          example: TRANSACTION_NOT_FOUND
+        message:
+          type: string
+          description: Human-readable explanation of the error.
+          example: The transaction does not exist.
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-11-20T15:00:00Z'
+        path:
+          type: string
+          example: /api/v1/transactions/4a6c8e0b-2d4f-4b1a-9c3e-5f7a9b1c3d5e
+        traceId:
+          type: string
+          description: >-
+            Correlation identifier of the request: the X-Correlation-ID header received, or
+            the one generated when it was absent. It is also returned in that header and
+            written in the logs of every service the request reached, including the ones that
+            take part in the transaction later.
+    TransactionType:
+      title: TransactionType
+      type: string
+      enum: [CREDIT_PAYMENT]
+    TransactionStatus:
+      title: TransactionStatus
+      type: string
+      enum: [PENDING_DEBIT, PENDING_PAYMENT, PENDING_REVERSAL, COMPLETED, REJECTED, REVERSED, REVERSAL_FAILED]
+    RejectedStep:
+      title: RejectedStep
+      type: string
+      enum: [DEBIT, PAYMENT]
+      description: DEBIT when Account Service rejected the debit; PAYMENT when Credit Service rejected the payment.
+    CurrencyCode:
+      title: CurrencyCode
+      type: string
+      enum: [PEN, USD]
