@@ -1,4 +1,4 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.vo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;

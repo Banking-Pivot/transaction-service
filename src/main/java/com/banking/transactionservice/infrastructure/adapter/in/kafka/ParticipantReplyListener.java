@@ -1,7 +1,7 @@
 package com.banking.transactionservice.infrastructure.adapter.in.kafka;
 
 import com.banking.transactionservice.application.port.in.ApplyParticipantReplyUseCase;
-import com.banking.transactionservice.domain.model.ParticipantReply;
+import com.banking.transactionservice.domain.model.vo.ParticipantReply;
 import com.banking.transactionservice.infrastructure.config.TransactionProperties;
 import com.banking.transactionservice.infrastructure.correlation.CorrelationId;
 import java.time.Duration;

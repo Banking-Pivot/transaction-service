@@ -20,7 +20,7 @@ import com.banking.transactionservice.application.port.in.ResendPendingCommandsU
 import com.banking.transactionservice.application.port.out.CommandPublisherPort;
 import com.banking.transactionservice.application.port.out.OutcomePublisherPort;
 import com.banking.transactionservice.application.port.out.TransactionStorePort;
-import com.banking.transactionservice.domain.model.CardPaymentLimits;
+import com.banking.transactionservice.domain.model.vo.CardPaymentLimits;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;

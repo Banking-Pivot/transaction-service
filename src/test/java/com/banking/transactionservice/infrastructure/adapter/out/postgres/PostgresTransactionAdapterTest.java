@@ -8,9 +8,9 @@ import com.banking.transactionservice.application.exception.TransactionConcurren
 import com.banking.transactionservice.application.port.out.TransactionStorePort;
 import com.banking.transactionservice.application.query.ListTransactionsQuery;
 import com.banking.transactionservice.application.query.PageRequest;
-import com.banking.transactionservice.domain.model.RejectedStep;
 import com.banking.transactionservice.domain.model.Transaction;
-import com.banking.transactionservice.domain.model.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.RejectedStep;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
 import com.banking.transactionservice.support.IntegrationTest;
 import com.banking.transactionservice.support.Transactions;
 import java.math.BigDecimal;

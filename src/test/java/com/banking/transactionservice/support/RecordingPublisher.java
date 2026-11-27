@@ -2,8 +2,8 @@ package com.banking.transactionservice.support;
 
 import com.banking.transactionservice.application.port.out.CommandPublisherPort;
 import com.banking.transactionservice.application.port.out.OutcomePublisherPort;
-import com.banking.transactionservice.domain.model.FundsMovementOutcome;
-import com.banking.transactionservice.domain.model.ParticipantCommand;
+import com.banking.transactionservice.domain.model.vo.FundsMovementOutcome;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
 import java.util.ArrayList;
 import java.util.List;
 import reactor.core.publisher.Mono;

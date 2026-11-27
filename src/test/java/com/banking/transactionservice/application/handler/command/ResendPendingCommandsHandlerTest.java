@@ -2,7 +2,7 @@ package com.banking.transactionservice.application.handler.command;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.banking.transactionservice.domain.model.ParticipantCommand;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
 import com.banking.transactionservice.support.InMemoryTransactionStore;
 import com.banking.transactionservice.support.RecordingPublisher;
 import com.banking.transactionservice.support.Transactions;

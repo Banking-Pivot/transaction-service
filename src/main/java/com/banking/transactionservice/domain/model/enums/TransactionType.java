@@ -1,4 +1,4 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.enums;
 
 /** What a transaction does. */
 public enum TransactionType {

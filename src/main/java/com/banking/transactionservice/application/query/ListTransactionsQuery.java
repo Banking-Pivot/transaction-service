@@ -1,6 +1,6 @@
 package com.banking.transactionservice.application.query;
 
-import com.banking.transactionservice.domain.model.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
 import java.util.Objects;
 import java.util.UUID;
 

@@ -1,4 +1,4 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.enums;
 
 /** The step of a transaction a service refused. */
 public enum RejectedStep {

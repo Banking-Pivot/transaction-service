@@ -1,6 +1,6 @@
 package com.banking.transactionservice.application.port.out;
 
-import com.banking.transactionservice.domain.model.ParticipantCommand;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
 import reactor.core.publisher.Mono;
 
 /** Sends a command to the service that owns a step of a transaction. */

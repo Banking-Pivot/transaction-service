@@ -10,7 +10,7 @@ import com.banking.transactionservice.application.port.in.RequestCardPaymentUseC
 import com.banking.transactionservice.application.port.in.RequestCreditPaymentUseCase;
 import com.banking.transactionservice.application.query.ListTransactionsQuery;
 import com.banking.transactionservice.application.query.PageRequest;
-import com.banking.transactionservice.domain.model.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.api.TransactionsApiDelegate;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.CardPaymentRequest;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.CreditPaymentRequest;
@@ -128,8 +128,8 @@ public class TransactionsApiDelegateImpl implements TransactionsApiDelegate {
                     cardId,
                     status == null
                         ? null
-                        : com.banking.transactionservice.domain.model.TransactionStatus.valueOf(
-                            status.getValue())))
+                        : com.banking.transactionservice.domain.model.enums.TransactionStatus
+                            .valueOf(status.getValue())))
         .flatMap(listTransactions::execute)
         .map(mapper::toPage)
         .map(ResponseEntity::ok);

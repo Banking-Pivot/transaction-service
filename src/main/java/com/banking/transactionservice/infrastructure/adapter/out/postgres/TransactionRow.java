@@ -1,12 +1,12 @@
 package com.banking.transactionservice.infrastructure.adapter.out.postgres;
 
-import com.banking.transactionservice.domain.model.CurrencyCode;
-import com.banking.transactionservice.domain.model.RejectedStep;
-import com.banking.transactionservice.domain.model.Rejection;
-import com.banking.transactionservice.domain.model.ReversalFailure;
 import com.banking.transactionservice.domain.model.Transaction;
-import com.banking.transactionservice.domain.model.TransactionStatus;
-import com.banking.transactionservice.domain.model.TransactionType;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.RejectedStep;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.TransactionType;
+import com.banking.transactionservice.domain.model.vo.Rejection;
+import com.banking.transactionservice.domain.model.vo.ReversalFailure;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Arrays;

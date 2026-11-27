@@ -1,4 +1,4 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.vo;
 
 /**
  * Why Account Service could not return a debit to the account.

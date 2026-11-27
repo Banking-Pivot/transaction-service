@@ -1,5 +1,6 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.vo;
 
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
 import java.math.BigDecimal;
 import java.util.UUID;
 

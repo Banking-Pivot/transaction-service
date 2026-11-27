@@ -1,7 +1,7 @@
 package com.banking.transactionservice.infrastructure.adapter.out.kafka;
 
 import com.banking.transactionservice.application.port.out.CommandPublisherPort;
-import com.banking.transactionservice.domain.model.ParticipantCommand;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
 import com.banking.transactionservice.infrastructure.config.TransactionProperties;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;

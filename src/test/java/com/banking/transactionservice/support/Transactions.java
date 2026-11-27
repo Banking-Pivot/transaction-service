@@ -1,7 +1,7 @@
 package com.banking.transactionservice.support;
 
-import com.banking.transactionservice.domain.model.CurrencyCode;
 import com.banking.transactionservice.domain.model.Transaction;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;

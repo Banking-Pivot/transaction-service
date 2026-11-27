@@ -1,7 +1,8 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.vo;
 
 import com.banking.transactionservice.domain.exception.RuleViolation;
 import com.banking.transactionservice.domain.exception.TransactionRuleViolationException;
+import com.banking.transactionservice.domain.model.Amounts;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneId;

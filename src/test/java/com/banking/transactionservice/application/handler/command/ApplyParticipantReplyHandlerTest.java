@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.banking.transactionservice.application.exception.TransactionConcurrentModificationException;
-import com.banking.transactionservice.domain.model.ParticipantCommand;
-import com.banking.transactionservice.domain.model.ParticipantReply;
-import com.banking.transactionservice.domain.model.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
+import com.banking.transactionservice.domain.model.vo.ParticipantReply;
 import com.banking.transactionservice.support.InMemoryTransactionStore;
 import com.banking.transactionservice.support.RecordingPublisher;
 import com.banking.transactionservice.support.Transactions;

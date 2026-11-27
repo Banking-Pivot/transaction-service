@@ -3,11 +3,11 @@ package com.banking.transactionservice.application.handler.command;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.banking.transactionservice.application.command.MoveFundsCommand;
-import com.banking.transactionservice.domain.model.FundsMovementOutcome;
-import com.banking.transactionservice.domain.model.ParticipantCommand;
 import com.banking.transactionservice.domain.model.Transaction;
-import com.banking.transactionservice.domain.model.TransactionStatus;
-import com.banking.transactionservice.domain.model.TransactionType;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.TransactionType;
+import com.banking.transactionservice.domain.model.vo.FundsMovementOutcome;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
 import com.banking.transactionservice.support.InMemoryTransactionStore;
 import com.banking.transactionservice.support.RecordingPublisher;
 import com.banking.transactionservice.support.Transactions;

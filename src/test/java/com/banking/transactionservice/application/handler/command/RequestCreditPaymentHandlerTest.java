@@ -7,9 +7,9 @@ import com.banking.transactionservice.application.command.RequestCreditPaymentCo
 import com.banking.transactionservice.application.exception.OperationIdConflictException;
 import com.banking.transactionservice.application.model.RequestedTransaction;
 import com.banking.transactionservice.domain.exception.TransactionRuleViolationException;
-import com.banking.transactionservice.domain.model.CurrencyCode;
-import com.banking.transactionservice.domain.model.ParticipantCommand;
-import com.banking.transactionservice.domain.model.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
 import com.banking.transactionservice.support.InMemoryTransactionStore;
 import com.banking.transactionservice.support.RecordingPublisher;
 import com.banking.transactionservice.support.Transactions;

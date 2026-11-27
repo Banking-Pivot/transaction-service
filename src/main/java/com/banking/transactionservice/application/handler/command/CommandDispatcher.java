@@ -2,8 +2,8 @@ package com.banking.transactionservice.application.handler.command;
 
 import com.banking.transactionservice.application.port.out.CommandPublisherPort;
 import com.banking.transactionservice.application.port.out.OutcomePublisherPort;
-import com.banking.transactionservice.domain.model.FundsMovementOutcome;
 import com.banking.transactionservice.domain.model.Transaction;
+import com.banking.transactionservice.domain.model.vo.FundsMovementOutcome;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

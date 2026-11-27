@@ -2,7 +2,7 @@ package com.banking.transactionservice.infrastructure.adapter.in.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.banking.transactionservice.domain.model.ParticipantReply;
+import com.banking.transactionservice.domain.model.vo.ParticipantReply;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;

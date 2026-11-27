@@ -1,8 +1,8 @@
 package com.banking.transactionservice.application.model;
 
-import com.banking.transactionservice.domain.model.CurrencyCode;
 import com.banking.transactionservice.domain.model.Transaction;
-import com.banking.transactionservice.domain.model.TransactionType;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.TransactionType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;

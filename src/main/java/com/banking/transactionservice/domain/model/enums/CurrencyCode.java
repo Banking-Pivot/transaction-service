@@ -1,4 +1,4 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.enums;
 
 import com.banking.transactionservice.domain.exception.RuleViolation;
 import com.banking.transactionservice.domain.exception.TransactionRuleViolationException;

@@ -1,6 +1,6 @@
 package com.banking.transactionservice.infrastructure.adapter.out.kafka;
 
-import com.banking.transactionservice.domain.model.FundsMovementOutcome;
+import com.banking.transactionservice.domain.model.vo.FundsMovementOutcome;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.math.BigDecimal;
 import java.util.UUID;

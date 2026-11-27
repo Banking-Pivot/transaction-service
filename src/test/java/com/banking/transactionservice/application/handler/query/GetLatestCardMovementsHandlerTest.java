@@ -3,9 +3,9 @@ package com.banking.transactionservice.application.handler.query;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.banking.transactionservice.application.model.CardMovement;
-import com.banking.transactionservice.domain.model.CurrencyCode;
 import com.banking.transactionservice.domain.model.Transaction;
-import com.banking.transactionservice.domain.model.TransactionType;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.TransactionType;
 import com.banking.transactionservice.support.InMemoryTransactionStore;
 import com.banking.transactionservice.support.Transactions;
 import java.math.BigDecimal;

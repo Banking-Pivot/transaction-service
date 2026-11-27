@@ -1,6 +1,6 @@
 package com.banking.transactionservice.application.command;
 
-import com.banking.transactionservice.domain.model.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
 import java.math.BigDecimal;
 import java.util.Objects;
 import java.util.UUID;

@@ -1,6 +1,6 @@
 package com.banking.transactionservice.infrastructure.adapter.in.kafka;
 
-import com.banking.transactionservice.domain.model.ParticipantReply;
+import com.banking.transactionservice.domain.model.vo.ParticipantReply;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.math.BigDecimal;
 import java.util.List;

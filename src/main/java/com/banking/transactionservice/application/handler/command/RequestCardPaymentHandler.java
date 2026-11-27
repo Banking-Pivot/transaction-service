@@ -4,8 +4,8 @@ import com.banking.transactionservice.application.command.RequestCardPaymentComm
 import com.banking.transactionservice.application.model.RequestedTransaction;
 import com.banking.transactionservice.application.port.in.RequestCardPaymentUseCase;
 import com.banking.transactionservice.application.port.out.TransactionStorePort;
-import com.banking.transactionservice.domain.model.CardPaymentLimits;
 import com.banking.transactionservice.domain.model.Transaction;
+import com.banking.transactionservice.domain.model.vo.CardPaymentLimits;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;

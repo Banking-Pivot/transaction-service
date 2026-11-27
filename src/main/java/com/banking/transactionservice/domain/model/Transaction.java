@@ -2,6 +2,14 @@ package com.banking.transactionservice.domain.model;
 
 import com.banking.transactionservice.domain.exception.RuleViolation;
 import com.banking.transactionservice.domain.exception.TransactionRuleViolationException;
+import com.banking.transactionservice.domain.model.enums.CurrencyCode;
+import com.banking.transactionservice.domain.model.enums.RejectedStep;
+import com.banking.transactionservice.domain.model.enums.TransactionStatus;
+import com.banking.transactionservice.domain.model.enums.TransactionType;
+import com.banking.transactionservice.domain.model.vo.FundsMovementOutcome;
+import com.banking.transactionservice.domain.model.vo.ParticipantCommand;
+import com.banking.transactionservice.domain.model.vo.Rejection;
+import com.banking.transactionservice.domain.model.vo.ReversalFailure;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;

@@ -1,5 +1,6 @@
-package com.banking.transactionservice.domain.model;
+package com.banking.transactionservice.domain.model.vo;
 
+import com.banking.transactionservice.domain.model.Transaction;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
