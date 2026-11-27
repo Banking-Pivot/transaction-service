@@ -6,6 +6,8 @@ import com.banking.transactionservice.application.model.ResultPage;
 import com.banking.transactionservice.application.port.out.TransactionStorePort;
 import com.banking.transactionservice.application.query.ListTransactionsQuery;
 import com.banking.transactionservice.domain.model.Transaction;
+import com.banking.transactionservice.domain.model.TransactionStatus;
+import com.banking.transactionservice.domain.model.TransactionType;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -91,6 +93,37 @@ public final class InMemoryTransactionStore implements TransactionStorePort {
                     .filter(transaction -> transaction.getCommandSentAt().isBefore(sentBefore))
                     .sorted(Comparator.comparing(Transaction::getCommandSentAt))
                     .limit(limit)
+                    .toList()));
+  }
+
+  @Override
+  public Flux<Transaction> findLatestCompletedByCard(UUID cardId, int limit) {
+    return Flux.defer(
+        () ->
+            Flux.fromIterable(
+                rows.values().stream()
+                    .filter(transaction -> transaction.getStatus() == TransactionStatus.COMPLETED)
+                    .filter(
+                        transaction ->
+                            cardId.equals(transaction.getSourceCardId())
+                                || cardId.equals(transaction.getDestinationCardId()))
+                    .sorted(Comparator.comparing(Transaction::getUpdatedAt).reversed())
+                    .limit(limit)
+                    .toList()));
+  }
+
+  @Override
+  public Flux<Transaction> findCountedCardPayments(UUID cardId, Instant from, Instant until) {
+    return Flux.defer(
+        () ->
+            Flux.fromIterable(
+                rows.values().stream()
+                    .filter(transaction -> transaction.getType() == TransactionType.CARD_PAYMENT)
+                    .filter(transaction -> cardId.equals(transaction.getSourceCardId()))
+                    .filter(transaction -> !transaction.getCreatedAt().isBefore(from))
+                    .filter(transaction -> transaction.getCreatedAt().isBefore(until))
+                    .filter(transaction -> transaction.getStatus() != TransactionStatus.REJECTED)
+                    .filter(transaction -> transaction.getStatus() != TransactionStatus.REVERSED)
                     .toList()));
   }
 

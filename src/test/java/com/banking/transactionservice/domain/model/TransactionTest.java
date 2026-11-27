@@ -29,7 +29,7 @@ class TransactionTest {
     assertThat(transaction.getVersion()).isZero();
     assertThat(transaction.getCommandAttempts()).isZero();
     assertThat(transaction.getCreatedAt()).isEqualTo(Transactions.START);
-    assertThat(transaction.nextCommand())
+    assertThat(transaction.nextCommands())
         .contains(
             new ParticipantCommand.DebitAccount(
                 ID,
@@ -85,7 +85,7 @@ class TransactionTest {
     assertThat(debited.getVersion()).isEqualTo(1);
     assertThat(debited.getUpdatedAt()).isEqualTo(LATER);
     assertThat(debited.getCommandSentAt()).isEqualTo(LATER);
-    assertThat(debited.nextCommand())
+    assertThat(debited.nextCommands())
         .contains(
             new ParticipantCommand.PayCredit(
                 ID,
@@ -101,7 +101,7 @@ class TransactionTest {
     assertThat(paid.getDebtAfter()).isEqualTo(new BigDecimal("850.00"));
     assertThat(paid.getRejection()).isNull();
     assertThat(paid.getVersion()).isEqualTo(2);
-    assertThat(paid.nextCommand()).isEmpty();
+    assertThat(paid.nextCommands()).isEmpty();
   }
 
   @Test
@@ -117,7 +117,7 @@ class TransactionTest {
             new Rejection(
                 RejectedStep.DEBIT, "INSUFFICIENT_FUNDS", "The balance does not cover it."));
     assertThat(rejected.getFee()).isNull();
-    assertThat(rejected.nextCommand()).isEmpty();
+    assertThat(rejected.nextCommands()).isEmpty();
   }
 
   @Test
@@ -127,7 +127,7 @@ class TransactionTest {
     assertThat(waiting.getStatus()).isEqualTo(TransactionStatus.PENDING_REVERSAL);
     assertThat(waiting.getRejection().step()).isEqualTo(RejectedStep.PAYMENT);
     assertThat(waiting.getRejection().code()).isEqualTo("PAYMENT_EXCEEDS_DEBT");
-    assertThat(waiting.nextCommand())
+    assertThat(waiting.nextCommands())
         .contains(
             new ParticipantCommand.ReverseDebit(
                 ID,
@@ -142,7 +142,7 @@ class TransactionTest {
     assertThat(reversed.getAccountBalanceAfter()).isEqualTo(new BigDecimal("500.00"));
     assertThat(reversed.getFee()).isEqualTo(new BigDecimal("1.50"));
     assertThat(reversed.getRejection().step()).isEqualTo(RejectedStep.PAYMENT);
-    assertThat(reversed.nextCommand()).isEmpty();
+    assertThat(reversed.nextCommands()).isEmpty();
   }
 
   @Test
@@ -156,7 +156,7 @@ class TransactionTest {
     assertThat(failed.getReversalFailure())
         .isEqualTo(new ReversalFailure("ACCOUNT_CLOSED", "The account is closed."));
     assertThat(failed.getRejection().code()).isEqualTo("PAYMENT_EXCEEDS_DEBT");
-    assertThat(failed.nextCommand()).isEmpty();
+    assertThat(failed.nextCommands()).isEmpty();
   }
 
   @Test
@@ -218,7 +218,7 @@ class TransactionTest {
     assertThat(resent.getCommandSentAt()).isEqualTo(LATER);
     assertThat(resent.getVersion()).isEqualTo(2);
     assertThat(resent.getUpdatedAt()).isEqualTo(Transactions.START);
-    assertThat(resent.nextCommand()).isEqualTo(Transactions.pendingDebit(ID).nextCommand());
+    assertThat(resent.nextCommands()).isEqualTo(Transactions.pendingDebit(ID).nextCommands());
 
     Transaction debited =
         resent.debited(BigDecimal.ZERO, BigDecimal.TEN, LATER.plusSeconds(5)).orElseThrow();
@@ -258,7 +258,9 @@ class TransactionTest {
   void onlyThePendingStatusesWaitForAService() {
     assertThat(TransactionStatus.waiting())
         .containsExactly(
+            TransactionStatus.PENDING_CARD,
             TransactionStatus.PENDING_DEBIT,
+            TransactionStatus.PENDING_CREDIT,
             TransactionStatus.PENDING_PAYMENT,
             TransactionStatus.PENDING_REVERSAL)
         .noneMatch(TransactionStatus::isFinal);

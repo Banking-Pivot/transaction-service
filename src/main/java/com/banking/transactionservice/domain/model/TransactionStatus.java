@@ -5,22 +5,26 @@ import java.util.List;
 /**
  * How far a transaction got.
  *
- * <p>The three PENDING statuses wait for the answer of a service; the other four are final.
+ * <p>The five PENDING statuses wait for the answer of a service; the other four are final.
  */
 public enum TransactionStatus {
+  /** Card Service was asked which accounts the debit card, or cards, of the transaction use. */
+  PENDING_CARD(false),
   /** Account Service was asked to debit the account. */
   PENDING_DEBIT(false),
+  /** Account Service was asked to credit the destination account. */
+  PENDING_CREDIT(false),
   /** The account was debited and Credit Service was asked to apply the payment. */
   PENDING_PAYMENT(false),
-  /** Credit Service rejected the payment and Account Service was asked to return the debit. */
+  /** The second step was rejected and Account Service was asked to return the debit. */
   PENDING_REVERSAL(false),
-  /** The account was debited and the credit product was paid. */
+  /** Every step of the transaction was done. */
   COMPLETED(true),
-  /** The account could not be debited. No money moved. */
+  /** A step was refused and no money stayed moved. */
   REJECTED(true),
-  /** The payment was rejected and the debit went back to the account. */
+  /** The second step was rejected and the debit went back to the account. */
   REVERSED(true),
-  /** The payment was rejected and the debit could not be returned. Needs the bank's attention. */
+  /** The second step was rejected and the debit could not be returned. Needs attention. */
   REVERSAL_FAILED(true);
 
   private final boolean finished;
@@ -36,6 +40,6 @@ public enum TransactionStatus {
 
   /** The statuses that wait for the answer of a service. */
   public static List<TransactionStatus> waiting() {
-    return List.of(PENDING_DEBIT, PENDING_PAYMENT, PENDING_REVERSAL);
+    return List.of(PENDING_CARD, PENDING_DEBIT, PENDING_CREDIT, PENDING_PAYMENT, PENDING_REVERSAL);
   }
 }

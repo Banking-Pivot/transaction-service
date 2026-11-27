@@ -14,7 +14,8 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 /**
- * Moves a transaction with the answer of a service and sends the command of the next step.
+ * Moves a transaction with the answer of a service and sends what follows: the commands of the next
+ * step, or the outcome when the transaction ended and Yanki Service is waiting for it.
  *
  * <p>Answers can arrive twice (a command that was sent again is answered again) and late. The
  * transaction decides: an answer it is not waiting for changes nothing. The change is written only
@@ -80,7 +81,9 @@ public class ApplyParticipantReplyHandler implements ApplyParticipantReplyUseCas
                     next.getId(),
                     transaction.getStatus(),
                     next.getStatus()))
-        .then(dispatcher.dispatch(next));
+        .then(
+            Mono.defer(
+                () -> next.advancedFrom(transaction) ? dispatcher.dispatch(next) : Mono.empty()));
   }
 
   private static Mono<Void> unknown(ParticipantReply reply) {

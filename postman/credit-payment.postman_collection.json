@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "transaction-service - pago de crédito desde una cuenta",
-    "description": "Pago de un préstamo o de una tarjeta de crédito con cargo a una cuenta bancaria, coordinado por transaction-service con mensajes de Kafka: pago completado, cargo rechazado por la cuenta, pago rechazado por el crédito con devolución del cargo, repetición del pedido, validación y consultas. Todo va por el API Gateway (perfil dev, puerto 8080), que necesita Kafka, discovery-server, customer-service, product-service, account-service, credit-service y transaction-service arriba; ajusta baseUrl si corre en otra dirección. Corre la colección completa y en orden: cada carpeta usa la cuenta y los créditos de la primera. Cada corrida crea un cliente, una cuenta, créditos y operationId nuevos, así que se puede repetir sobre la misma base. Las peticiones \"Esperar el resultado\" se repiten solas hasta que el pago termina.",
+    "description": "Pago de un préstamo o de una tarjeta de crédito con cargo a una cuenta bancaria, coordinado por transaction-service con mensajes de Kafka: pago completado, cargo rechazado por la cuenta, pago rechazado por el crédito con devolución del cargo, repetición del pedido, validación y consultas, pago del crédito de otro cliente y los límites del pago con tarjeta de débito (por pago y por día). Todo va por el API Gateway (perfil dev, puerto 8080), que necesita Kafka, discovery-server, auth-service, customer-service, product-service, account-service, credit-service, card-service y transaction-service arriba; ajusta baseUrl si corre en otra dirección. El gateway pide un token: antes de cada petición la colección inicia sesión con username y password si todavía no tiene uno o si está por vencer, y lo envía como Bearer. Corre la colección completa y en orden: cada carpeta usa la cuenta y los créditos de la primera. Cada corrida crea un cliente, una cuenta, créditos y operationId nuevos, así que se puede repetir sobre la misma base. Las peticiones \"Esperar el resultado\" se repiten solas hasta que el pago termina.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -1362,12 +1362,716 @@
           }
         }
       ]
+    },
+    {
+      "name": "6. Pago del crédito de otro cliente",
+      "description": "Cualquiera puede pagar el crédito de un tercero: transaction-service no compara al dueño de la cuenta con el del crédito, y account-service y credit-service tampoco. Otro cliente, con su propia cuenta, paga 200 del préstamo del primero.",
+      "item": [
+        {
+          "name": "41 Crear otro cliente",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Otro documento: es un cliente distinto del que tiene el préstamo.",
+                  "pm.collectionVariables.set('document', String(Math.floor(10000000 + Math.random() * 90000000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Es otro cliente', () => {",
+                  "  pm.expect(pm.response.json().id).to.not.eql(pm.collectionVariables.get('customerId'));",
+                  "});",
+                  "pm.collectionVariables.set('payerCustomerId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/customers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PERSONAL\",\n  \"profile\": \"STANDARD\",\n  \"documentType\": \"DNI\",\n  \"documentNumber\": \"{{document}}\",\n  \"name\": \"Luis Rojas\"\n}"
+            }
+          }
+        },
+        {
+          "name": "42 Abrir la cuenta de ahorro del otro cliente con 500",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created con saldo 500', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().balance).to.eql(500);",
+                  "});",
+                  "pm.collectionVariables.set('payerAccountId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/accounts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product\": \"SAVINGS\",\n  \"currency\": \"PEN\",\n  \"primaryHolderId\": \"{{payerCustomerId}}\",\n  \"initialDeposit\": 500\n}"
+            }
+          }
+        },
+        {
+          "name": "43 Pedir el pago de 200 del préstamo del primer cliente",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted: la cuenta de un cliente y el crédito de otro', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('PENDING_DEBIT');",
+                  "  pm.expect(body.accountId).to.eql(pm.collectionVariables.get('payerAccountId'));",
+                  "  pm.expect(body.creditId).to.eql(pm.collectionVariables.get('loanId'));",
+                  "  pm.expect(body.amount).to.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/credit-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"accountId\": \"{{payerAccountId}}\",\n  \"creditId\": \"{{loanId}}\",\n  \"amount\": 200,\n  \"currency\": \"PEN\",\n  \"description\": \"Pago por un tercero\"\n}"
+            }
+          }
+        },
+        {
+          "name": "44 Esperar el resultado: COMPLETED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('COMPLETED: la cuenta del tercero queda en 300 y la deuda en 4650', () => {",
+                  "    pm.expect(body.status).to.eql('COMPLETED');",
+                  "    pm.expect(body.accountBalanceAfter).to.eql(300);",
+                  "    pm.expect(body.debtAfter).to.eql(4650);",
+                  "    pm.expect(body).to.not.have.any.keys('rejection', 'reversalFailure');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "45 Deuda del préstamo: 4650",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Deuda 4650', () => {",
+                  "  pm.expect(pm.response.json().outstandingDebt).to.eql(4650);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/credits/{{loanId}}/debt"
+          }
+        },
+        {
+          "name": "46 La cuenta del dueño del préstamo sigue en 850",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Saldo 850: pagó el otro cliente', () => {",
+                  "  pm.expect(pm.response.json().balance).to.eql(850);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/balance"
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Límites del pago con tarjeta de débito (account-service, card-service)",
+      "description": "Un pago con tarjeta de débito no puede pasar de 5000 (transaction.limits.card-payment-max) y los pagos de una tarjeta en un día no pueden sumar más de 10000 (transaction.limits.card-daily-max; el día es el de transaction.business-zone, America/Lima). Los dos límites se revisan al llegar el pedido: el que no pasa responde 422 y no se guarda nada. Los pagos REJECTED o REVERSED no cuentan en el día; los que siguen en curso sí. Repetir un operationId ya guardado responde como siempre, sin revisar los límites otra vez. Usa una tarjeta de débito nueva sobre una cuenta corriente con 12000, así que el día de la tarjeta empieza en cero en cada corrida. Necesita card-service arriba.",
+      "item": [
+        {
+          "name": "47 Abrir cuenta corriente PEN sin depósito",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('CHECKING PEN con saldo 0', () => {",
+                  "  pm.expect(pm.response.json().product).to.eql('CHECKING');",
+                  "  pm.expect(pm.response.json().balance).to.eql(0);",
+                  "});",
+                  "pm.collectionVariables.set('checkingId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/accounts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product\": \"CHECKING\",\n  \"currency\": \"PEN\",\n  \"primaryHolderId\": \"{{customerId}}\",\n  \"initialDeposit\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "48 Depositar 12000 en la cuenta corriente",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Saldo 12000', () => {",
+                  "  pm.expect(pm.response.json().balanceAfter).to.eql(12000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/accounts/{{checkingId}}/deposits",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"amount\": 12000\n}"
+            }
+          }
+        },
+        {
+          "name": "49 Pedir una tarjeta de débito sobre la cuenta corriente",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted: la tarjeta espera la verificación de su cuenta', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().mainAccountId).to.eql(pm.collectionVariables.get('checkingId'));",
+                  "});",
+                  "pm.collectionVariables.set('debitCardId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/cards",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"mainAccountId\": \"{{checkingId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "50 Esperar la tarjeta: ACTIVE",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status === 'PENDING_VERIFICATION' && tries < 60) {",
+                  "  // account-service aún no responde: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('ACTIVE', () => {",
+                  "    pm.expect(body.status).to.eql('ACTIVE');",
+                  "    pm.expect(body).to.not.have.any.keys('rejection');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/cards/{{debitCardId}}"
+          }
+        },
+        {
+          "name": "51 Pagar 5000.01 con la tarjeta (422 CARD_PAYMENT_LIMIT_EXCEEDED)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 CARD_PAYMENT_LIMIT_EXCEEDED', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.code).to.eql('CARD_PAYMENT_LIMIT_EXCEEDED');",
+                  "  pm.expect(body.message).to.include('5000.00');",
+                  "  pm.expect(body.path).to.eql('/api/v1/transactions/card-payments');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/card-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"cardId\": \"{{debitCardId}}\",\n  \"amount\": 5000.01,\n  \"currency\": \"PEN\",\n  \"description\": \"Compra en tienda\"\n}"
+            }
+          }
+        },
+        {
+          "name": "52 El pago que pasó el límite no se guardó (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 TRANSACTION_NOT_FOUND', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().code).to.eql('TRANSACTION_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "53 Pagar 5000 con la tarjeta: justo el límite (202)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('firstCardPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('operationId', pm.collectionVariables.get('firstCardPaymentId'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted: el pago queda registrado y en curso', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.type).to.eql('CARD_PAYMENT');",
+                  "  pm.expect(body.sourceCardId).to.eql(pm.collectionVariables.get('debitCardId'));",
+                  "  pm.expect(body.amount).to.eql(5000);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/card-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{firstCardPaymentId}}\",\n  \"cardId\": \"{{debitCardId}}\",\n  \"amount\": 5000,\n  \"currency\": \"PEN\",\n  \"description\": \"Compra en tienda\"\n}"
+            }
+          }
+        },
+        {
+          "name": "54 Esperar el resultado: COMPLETED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('COMPLETED con cargo a la cuenta corriente', () => {",
+                  "    pm.expect(body.status).to.eql('COMPLETED');",
+                  "    pm.expect(body.accountId).to.eql(pm.collectionVariables.get('checkingId'));",
+                  "    pm.expect(body).to.not.have.any.keys('rejection');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "55 Pagar otros 5000: el día de la tarjeta llega a 10000 (202)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.unset('pollCount');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().amount).to.eql(5000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/card-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"cardId\": \"{{debitCardId}}\",\n  \"amount\": 5000,\n  \"currency\": \"PEN\",\n  \"description\": \"Compra en tienda\"\n}"
+            }
+          }
+        },
+        {
+          "name": "56 Esperar el resultado: COMPLETED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const tries = Number(pm.collectionVariables.get('pollCount') || 0);",
+                  "if (pm.response.code === 200 && body.status.startsWith('PENDING_') && tries < 60) {",
+                  "  // El pago sigue en curso: se vuelve a consultar en un cuarto de segundo.",
+                  "  pm.collectionVariables.set('pollCount', tries + 1);",
+                  "  setTimeout(() => {}, 250);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollCount');",
+                  "  pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "  pm.test('COMPLETED', () => {",
+                  "    pm.expect(body.status).to.eql('COMPLETED');",
+                  "    pm.expect(body).to.not.have.any.keys('rejection');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/transactions/{{operationId}}"
+          }
+        },
+        {
+          "name": "57 Pagar 0.01 con el día lleno (422 CARD_DAILY_LIMIT_EXCEEDED)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('operationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 CARD_DAILY_LIMIT_EXCEEDED', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.code).to.eql('CARD_DAILY_LIMIT_EXCEEDED');",
+                  "  pm.expect(body.message).to.include('10000.00');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/card-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{operationId}}\",\n  \"cardId\": \"{{debitCardId}}\",\n  \"amount\": 0.01,\n  \"currency\": \"PEN\",\n  \"description\": \"Compra en tienda\"\n}"
+            }
+          }
+        },
+        {
+          "name": "58 Repetir el primer pago de 5000 (202, Idempotent-Replayed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 con la misma transacción: una repetición no revisa los límites', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get('firstCardPaymentId'));",
+                  "  pm.expect(body.status).to.eql('COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/card-payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{firstCardPaymentId}}\",\n  \"cardId\": \"{{debitCardId}}\",\n  \"amount\": 5000,\n  \"currency\": \"PEN\",\n  \"description\": \"Compra en tienda\"\n}"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const expiresAt = Number(pm.collectionVariables.get('accessTokenExpiresAt') || 0);",
+          "if (!pm.collectionVariables.get('accessToken') || Date.now() > expiresAt) {",
+          "  pm.sendRequest({",
+          "    url: pm.collectionVariables.get('baseUrl') + '/api/v1/auth/login',",
+          "    method: 'POST',",
+          "    header: { 'Content-Type': 'application/json' },",
+          "    body: { mode: 'raw', raw: JSON.stringify({",
+          "      username: pm.collectionVariables.get('username'),",
+          "      password: pm.collectionVariables.get('password') }) }",
+          "  }, (error, response) => {",
+          "    if (error || response.code !== 200) { throw new Error('No se pudo iniciar sesión'); }",
+          "    const body = response.json();",
+          "    pm.collectionVariables.set('accessToken', body.accessToken);",
+          "    pm.collectionVariables.set('accessTokenExpiresAt', Date.now() + (body.expiresIn - 60) * 1000);",
+          "  });",
+          "}"
+        ]
+      }
     }
   ],
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:8080"
+    },
+    {
+      "key": "username",
+      "value": "admin"
+    },
+    {
+      "key": "password",
+      "value": "Admin-dev-2026"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "accessTokenExpiresAt",
+      "value": "0"
     },
     {
       "key": "document",
@@ -1403,6 +2107,26 @@
     },
     {
       "key": "pollCount",
+      "value": ""
+    },
+    {
+      "key": "payerCustomerId",
+      "value": ""
+    },
+    {
+      "key": "payerAccountId",
+      "value": ""
+    },
+    {
+      "key": "checkingId",
+      "value": ""
+    },
+    {
+      "key": "debitCardId",
+      "value": ""
+    },
+    {
+      "key": "firstCardPaymentId",
       "value": ""
     }
   ]

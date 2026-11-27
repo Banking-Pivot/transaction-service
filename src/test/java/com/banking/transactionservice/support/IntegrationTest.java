@@ -30,8 +30,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * <p>The application keeps its real {@code spring.config.import}. A stub Config Server serves the
  * settings of {@code stub-config/transaction-service.yml} and the locations of the containers; a
  * real Vault holds the database user and password, which the Config Server never serves. All of
- * them start once, before any Spring context. {@link TestParticipants} plays Account Service and
- * Credit Service on the same Kafka.
+ * them start once, before any Spring context. {@link TestParticipants} plays the other services on
+ * the same Kafka.
  *
  * <p>Every test starts with an empty table. The topics are not emptied: every test uses its own
  * transaction IDs.
@@ -136,6 +136,36 @@ public abstract class IntegrationTest {
   protected UUID requestedPayment() {
     UUID operationId = UUID.randomUUID();
     requestPayment(payment(operationId, UUID.randomUUID(), UUID.randomUUID()))
+        .expectStatus()
+        .isAccepted()
+        .expectBody(Void.class);
+    return operationId;
+  }
+
+  /** A valid request to pay 80.00 PEN with a debit card; tests change what they need. */
+  protected static Map<String, Object> cardPayment(UUID operationId, UUID cardId) {
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("operationId", operationId.toString());
+    body.put("cardId", cardId.toString());
+    body.put("amount", new BigDecimal("80.00"));
+    body.put("currency", "PEN");
+    body.put("description", "Grocery store");
+    return body;
+  }
+
+  protected WebTestClient.ResponseSpec requestCardPayment(Object body) {
+    return webTestClient
+        .post()
+        .uri("/api/v1/transactions/card-payments")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(body)
+        .exchange();
+  }
+
+  /** Requests a valid payment with the card and returns the ID of its transaction. */
+  protected UUID requestedCardPayment(UUID cardId) {
+    UUID operationId = UUID.randomUUID();
+    requestCardPayment(cardPayment(operationId, cardId))
         .expectStatus()
         .isAccepted()
         .expectBody(Void.class);

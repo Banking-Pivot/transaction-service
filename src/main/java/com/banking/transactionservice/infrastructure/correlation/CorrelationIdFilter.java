@@ -63,14 +63,16 @@ public class CorrelationIdFilter implements WebFilter, Ordered {
 
   // Method, path and status only: the query string, headers and body can carry personal data.
   private static void logRequest(ServerWebExchange exchange, String id, long startedAt) {
-    try (MDC.MDCCloseable ignored = MDC.putCloseable(CorrelationId.KEY, id)) {
-      HttpStatusCode status = exchange.getResponse().getStatusCode();
-      LOG.info(
-          "{} {} -> {} in {} ms",
-          exchange.getRequest().getMethod(),
-          exchange.getRequest().getPath().value(),
-          status == null ? "no status" : status.value(),
-          (System.nanoTime() - startedAt) / 1_000_000);
+    if (LOG.isInfoEnabled()) {
+      try (MDC.MDCCloseable ignored = MDC.putCloseable(CorrelationId.KEY, id)) {
+        HttpStatusCode status = exchange.getResponse().getStatusCode();
+        LOG.info(
+            "{} {} -> {} in {} ms",
+            exchange.getRequest().getMethod(),
+            exchange.getRequest().getPath().value(),
+            status == null ? "no status" : status.value(),
+            (System.nanoTime() - startedAt) / 1_000_000);
+      }
     }
   }
 }

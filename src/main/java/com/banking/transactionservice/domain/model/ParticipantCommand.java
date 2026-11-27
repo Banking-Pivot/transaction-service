@@ -4,20 +4,30 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * What a transaction asks of the service that owns the money of one step. Every command carries the
- * operationId its effect is recorded under in that service, so sending it again never moves money
- * twice.
+ * What a transaction asks of the service that owns one of its steps. Every command that moves money
+ * carries the operationId its effect is recorded under in that service, so sending it again never
+ * moves money twice.
  */
 public sealed interface ParticipantCommand {
 
   /** The transaction the command belongs to. */
   UUID transactionId();
 
-  /** Key the receiving service records the effect of the command under. */
-  UUID operationId();
+  /** Asks Card Service which accounts a debit card uses. It changes nothing there. */
+  record ResolveCard(UUID transactionId, UUID cardId) implements ParticipantCommand {}
 
   /** Asks Account Service to take the amount from the account, as a withdrawal. */
   record DebitAccount(
+      UUID transactionId,
+      UUID operationId,
+      UUID accountId,
+      BigDecimal amount,
+      CurrencyCode currency,
+      String description)
+      implements ParticipantCommand {}
+
+  /** Asks Account Service to put the amount in the account, as a deposit. */
+  record CreditAccount(
       UUID transactionId,
       UUID operationId,
       UUID accountId,

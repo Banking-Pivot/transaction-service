@@ -38,4 +38,17 @@ public interface TransactionStorePort {
   Flux<Transaction> findWaitingSince(Instant sentBefore, int limit);
 
   Mono<ResultPage<Transaction>> findPage(ListTransactionsQuery query);
+
+  /**
+   * Completed transactions whose source or destination card is the given one, the most recently
+   * completed first.
+   */
+  Flux<Transaction> findLatestCompletedByCard(UUID cardId, int limit);
+
+  /**
+   * Payments made with the debit card that were requested from {@code from} (included) to {@code
+   * until} (excluded) and still count against its daily limit: every status except REJECTED and
+   * REVERSED. Wallet payments that use the card are not card payments and are left out.
+   */
+  Flux<Transaction> findCountedCardPayments(UUID cardId, Instant from, Instant until);
 }

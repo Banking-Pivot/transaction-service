@@ -66,7 +66,7 @@ class CreditPaymentFlowTest extends IntegrationTest {
     assertThat(debit.correlationId()).isEqualTo(RECEIVED);
     assertThat(debit.field("operationId")).isEqualTo(id.toString());
     assertThat(debit.field("accountId")).isEqualTo(account.toString());
-    assertThat(debit.body().get("amount")).isEqualTo(new BigDecimal("150.00"));
+    assertThat(debit.body()).containsEntry("amount", new BigDecimal("150.00"));
     assertThat(debit.field("currency")).isEqualTo("PEN");
     assertThat(debit.field("description")).isEqualTo("November installment");
     assertThat(debit.body()).doesNotContainKeys("creditId", "originalOperationId");
@@ -81,8 +81,9 @@ class CreditPaymentFlowTest extends IntegrationTest {
     assertThat(pay.correlationId()).isEqualTo(RECEIVED);
     assertThat(pay.field("operationId")).isEqualTo(id.toString());
     assertThat(pay.field("creditId")).isEqualTo(credit.toString());
-    assertThat(pay.body().get("amount")).isEqualTo(new BigDecimal("150.00"));
-    assertThat(pay.body()).doesNotContainKeys("accountId", "originalOperationId");
+    assertThat(pay.body())
+        .containsEntry("amount", new BigDecimal("150.00"))
+        .doesNotContainKeys("accountId", "originalOperationId");
 
     participants.creditPaid(id, "850.00");
 
@@ -94,6 +95,52 @@ class CreditPaymentFlowTest extends IntegrationTest {
     assertThat(completed.getReversalFailure()).isNull();
     assertThat(completed.getUpdatedAt()).isAfterOrEqualTo(completed.getCreatedAt());
     assertThat(column(id, "version")).isEqualTo(2);
+  }
+
+  @Test
+  void anAccountOfOneCustomerPaysTheCreditOfAnother() {
+    UUID id = UUID.randomUUID();
+    UUID accountOfThePayer = UUID.randomUUID();
+    UUID creditOfSomebodyElse = UUID.randomUUID();
+    requestPayment(payment(id, accountOfThePayer, creditOfSomebodyElse))
+        .expectStatus()
+        .isAccepted();
+
+    // Nothing in the commands says who pays: neither service is asked to compare owners.
+    ReceivedCommand debit = participants.awaitCommand("DEBIT_ACCOUNT", id);
+    assertThat(debit.field("accountId")).isEqualTo(accountOfThePayer.toString());
+    assertThat(debit.body()).doesNotContainKeys("customerId", "creditId");
+    // Each service answers with the customer it knows; they are two different people.
+    participants.send(
+        id.toString(),
+        "{\"type\":\"ACCOUNT_DEBITED\",\"transactionId\":\""
+            + id
+            + "\",\"operationId\":\""
+            + id
+            + "\",\"customerId\":\""
+            + UUID.randomUUID()
+            + "\",\"amount\":150.00,\"fee\":0.00,\"balanceAfter\":350.00}",
+        "reply-" + id);
+
+    ReceivedCommand pay = participants.awaitCommand("PAY_CREDIT", id);
+    assertThat(pay.field("creditId")).isEqualTo(creditOfSomebodyElse.toString());
+    assertThat(pay.body()).doesNotContainKeys("customerId", "accountId");
+    participants.send(
+        id.toString(),
+        "{\"type\":\"CREDIT_PAID\",\"transactionId\":\""
+            + id
+            + "\",\"customerId\":\""
+            + UUID.randomUUID()
+            + "\",\"amount\":150.00,\"debtAfter\":4850.00}",
+        "reply-" + id);
+
+    TransactionResponse completed = awaitStatus(id, TransactionStatus.COMPLETED);
+    assertThat(completed.getAccountId()).isEqualTo(accountOfThePayer);
+    assertThat(completed.getCreditId()).isEqualTo(creditOfSomebodyElse);
+    assertThat(completed.getAccountBalanceAfter()).isEqualByComparingTo("350.00");
+    assertThat(completed.getDebtAfter()).isEqualByComparingTo("4850.00");
+    assertThat(completed.getRejection()).isNull();
+    assertThat(participants.countCommands("REVERSE_DEBIT", id, Duration.ofSeconds(1))).isZero();
   }
 
   @Test

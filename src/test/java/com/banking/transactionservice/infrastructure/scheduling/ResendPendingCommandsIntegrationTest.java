@@ -72,6 +72,44 @@ class ResendPendingCommandsIntegrationTest extends IntegrationTest {
     assertThat(resend.execute().block()).isZero();
   }
 
+  @Test
+  void theQuestionAboutACardAndACreditThatGotNoAnswerAreAskedAgain() {
+    UUID id = UUID.randomUUID();
+    UUID card = UUID.randomUUID();
+    participants.moveFunds(id, null, card);
+    ReceivedCommand question = participants.awaitCommand("RESOLVE_CARD", id);
+    age(id);
+
+    assertThat(resend.execute().block()).isEqualTo(1);
+
+    ReceivedCommand repeated = participants.awaitCommand("RESOLVE_CARD", id, 2);
+    assertThat(repeated.text()).isEqualTo(question.text());
+    assertThat(repeated.key()).isEqualTo(card.toString());
+    assertThat(repeated.correlationId()).isEqualTo(question.correlationId());
+    assertThat(column(id, "command_attempts")).isEqualTo(1);
+
+    // Card Service answers the question and its repeat.
+    UUID account = UUID.randomUUID();
+    participants.cardResolved(question, account);
+    participants.cardResolved(repeated, account);
+    ReceivedCommand credit = participants.awaitCommand("CREDIT_ACCOUNT", id);
+    awaitStatus(id, TransactionStatus.PENDING_CREDIT);
+    assertThat(column(id, "command_attempts")).isZero();
+    age(id);
+
+    assertThat(resend.execute().block()).isEqualTo(1);
+
+    // The repeat carries the same operationId, so the account is credited once.
+    assertThat(participants.awaitCommand("CREDIT_ACCOUNT", id, 2).text()).isEqualTo(credit.text());
+    participants.accountCredited(credit, "0.00", "160.00");
+    awaitStatus(id, TransactionStatus.COMPLETED);
+    participants.awaitOutcome("FUNDS_MOVED", id);
+    age(id);
+    assertThat(resend.execute().block()).isZero();
+    assertThat(participants.countCommands("CREDIT_ACCOUNT", id, Duration.ofSeconds(1)))
+        .isEqualTo(2);
+  }
+
   private void age(UUID transactionId) {
     databaseClient
         .sql(

@@ -4,7 +4,10 @@ transaction:
   messaging:
     account-commands-topic: banking.account.commands
     credit-commands-topic: banking.credit.commands
+    card-commands-topic: banking.card.commands
     replies-topic: banking.transaction.replies
+    commands-topic: banking.transaction.commands
+    wallet-replies-topic: banking.yanki.replies
     publish-timeout: 5s
     # Short wait so the test of a retried answer stays fast.
     retry-interval: 100ms
@@ -12,6 +15,11 @@ transaction:
     resend-interval: 1h
     resend-after: 30s
     resend-batch-size: 50
+  # The limits of card payments, as banking-config/transaction-service.yml sets them.
+  business-zone: America/Lima
+  limits:
+    card-payment-max: 5000.00
+    card-daily-max: 10000.00
 spring:
   r2dbc:
     pool:

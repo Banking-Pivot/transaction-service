@@ -1,15 +1,20 @@
 package com.banking.transactionservice.infrastructure.adapter.in.rest;
 
+import com.banking.transactionservice.application.command.RequestCardPaymentCommand;
 import com.banking.transactionservice.application.command.RequestCreditPaymentCommand;
 import com.banking.transactionservice.application.model.RequestedTransaction;
+import com.banking.transactionservice.application.port.in.GetLatestCardMovementsUseCase;
 import com.banking.transactionservice.application.port.in.GetTransactionUseCase;
 import com.banking.transactionservice.application.port.in.ListTransactionsUseCase;
+import com.banking.transactionservice.application.port.in.RequestCardPaymentUseCase;
 import com.banking.transactionservice.application.port.in.RequestCreditPaymentUseCase;
 import com.banking.transactionservice.application.query.ListTransactionsQuery;
 import com.banking.transactionservice.application.query.PageRequest;
 import com.banking.transactionservice.domain.model.CurrencyCode;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.api.TransactionsApiDelegate;
+import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.CardPaymentRequest;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.CreditPaymentRequest;
+import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.LatestCardMovementsResponse;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.TransactionPageResponse;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.TransactionResponse;
 import com.banking.transactionservice.infrastructure.adapter.in.rest.generated.model.TransactionStatus;
@@ -33,19 +38,25 @@ public class TransactionsApiDelegateImpl implements TransactionsApiDelegate {
   static final String TRANSACTIONS_PATH = "/api/v1/transactions/";
 
   private final RequestCreditPaymentUseCase requestCreditPayment;
+  private final RequestCardPaymentUseCase requestCardPayment;
   private final GetTransactionUseCase getTransaction;
   private final ListTransactionsUseCase listTransactions;
+  private final GetLatestCardMovementsUseCase getLatestCardMovements;
   private final TransactionRestMapper mapper;
 
   /** Creates the delegate with the use cases and the mapper that builds the responses. */
   public TransactionsApiDelegateImpl(
       RequestCreditPaymentUseCase requestCreditPayment,
+      RequestCardPaymentUseCase requestCardPayment,
       GetTransactionUseCase getTransaction,
       ListTransactionsUseCase listTransactions,
+      GetLatestCardMovementsUseCase getLatestCardMovements,
       TransactionRestMapper mapper) {
     this.requestCreditPayment = requestCreditPayment;
+    this.requestCardPayment = requestCardPayment;
     this.getTransaction = getTransaction;
     this.listTransactions = listTransactions;
+    this.getLatestCardMovements = getLatestCardMovements;
     this.mapper = mapper;
   }
 
@@ -68,6 +79,32 @@ public class TransactionsApiDelegateImpl implements TransactionsApiDelegate {
   }
 
   @Override
+  public Mono<ResponseEntity<TransactionResponse>> requestCardPayment(
+      Mono<CardPaymentRequest> request, ServerWebExchange exchange) {
+    return request
+        .map(
+            body ->
+                new RequestCardPaymentCommand(
+                    body.getOperationId(),
+                    body.getCardId(),
+                    body.getAmount(),
+                    CurrencyCode.valueOf(body.getCurrency().getValue()),
+                    body.getDescription(),
+                    CorrelationId.of(exchange)))
+        .flatMap(requestCardPayment::execute)
+        .map(this::accepted);
+  }
+
+  @Override
+  public Mono<ResponseEntity<LatestCardMovementsResponse>> getLatestCardMovements(
+      UUID cardId, ServerWebExchange exchange) {
+    return getLatestCardMovements
+        .execute(cardId)
+        .map(movements -> mapper.toLatestMovements(cardId, movements))
+        .map(ResponseEntity::ok);
+  }
+
+  @Override
   public Mono<ResponseEntity<TransactionResponse>> getTransaction(
       UUID transactionId, ServerWebExchange exchange) {
     return getTransaction.execute(transactionId).map(mapper::toResponse).map(ResponseEntity::ok);
@@ -79,6 +116,7 @@ public class TransactionsApiDelegateImpl implements TransactionsApiDelegate {
       Integer size,
       UUID accountId,
       UUID creditId,
+      UUID cardId,
       TransactionStatus status,
       ServerWebExchange exchange) {
     return Mono.fromCallable(
@@ -87,6 +125,7 @@ public class TransactionsApiDelegateImpl implements TransactionsApiDelegate {
                     PageRequest.of(page, size),
                     accountId,
                     creditId,
+                    cardId,
                     status == null
                         ? null
                         : com.banking.transactionservice.domain.model.TransactionStatus.valueOf(

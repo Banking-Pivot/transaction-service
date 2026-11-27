@@ -3,7 +3,7 @@ package com.banking.transactionservice.application.port.out;
 import com.banking.transactionservice.domain.model.ParticipantCommand;
 import reactor.core.publisher.Mono;
 
-/** Sends a command to the service that owns the money of a step. */
+/** Sends a command to the service that owns a step of a transaction. */
 public interface CommandPublisherPort {
 
   /**

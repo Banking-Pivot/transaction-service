@@ -28,9 +28,9 @@ spring:
         # Read only this service's paths, not the shared secret/application.
         default-context: ""
 
-  # Commands to Account Service and Credit Service go out and their replies come in as JSON
-  # text. Keys are IDs, so the messages of one account, credit product or transaction keep
-  # their order.
+  # Commands to Account Service, Credit Service and Card Service go out and their replies come
+  # in as JSON text, and so do the requests of Yanki Service and their outcomes. Keys are IDs,
+  # so the messages of one account, credit product, card or transaction keep their order.
   kafka:
     consumer:
       group-id: transaction-service

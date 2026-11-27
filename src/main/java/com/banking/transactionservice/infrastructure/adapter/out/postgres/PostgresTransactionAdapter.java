@@ -10,6 +10,7 @@ import com.banking.transactionservice.application.port.out.TransactionStorePort;
 import com.banking.transactionservice.application.query.ListTransactionsQuery;
 import com.banking.transactionservice.domain.model.Transaction;
 import com.banking.transactionservice.domain.model.TransactionStatus;
+import com.banking.transactionservice.domain.model.TransactionType;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +34,12 @@ import reactor.core.publisher.Mono;
 public class PostgresTransactionAdapter implements TransactionStorePort {
 
   private static final String PRIMARY_KEY = "pk_transactions";
+  private static final String STATUS = "status";
+  private static final String COMMAND_SENT_AT = "commandSentAt";
+  private static final String CREATED_AT = "createdAt";
+  // A payment that moved no money, or gave it back, stops counting against the daily limit.
+  private static final List<String> NOT_COUNTED =
+      List.of(TransactionStatus.REJECTED.name(), TransactionStatus.REVERSED.name());
 
   private final R2dbcEntityTemplate template;
 
@@ -75,8 +82,8 @@ public class PostgresTransactionAdapter implements TransactionStorePort {
     List<String> waiting = TransactionStatus.waiting().stream().map(Enum::name).toList();
     return template
         .select(
-            query(where("status").in(waiting).and("commandSentAt").lessThan(sentBefore))
-                .sort(Sort.by("commandSentAt"))
+            query(where(STATUS).in(waiting).and(COMMAND_SENT_AT).lessThan(sentBefore))
+                .sort(Sort.by(COMMAND_SENT_AT))
                 .limit(limit),
             TransactionRow.class)
         .map(TransactionRow::toTransaction);
@@ -89,7 +96,7 @@ public class PostgresTransactionAdapter implements TransactionStorePort {
             template
                 .select(
                     query(filter)
-                        .sort(Sort.by(Sort.Order.desc("createdAt"), Sort.Order.asc("id")))
+                        .sort(Sort.by(Sort.Order.desc(CREATED_AT), Sort.Order.asc("id")))
                         .offset(request.pageRequest().offset())
                         .limit(request.pageRequest().size()),
                     TransactionRow.class)
@@ -99,17 +106,62 @@ public class PostgresTransactionAdapter implements TransactionStorePort {
         .map(page -> ResultPage.of(page.getT1(), request.pageRequest(), page.getT2()));
   }
 
-  // The request data never changes. Result columns only go from empty to set, so a value that is
-  // still empty is left out of the statement.
+  @Override
+  public Flux<Transaction> findLatestCompletedByCard(UUID cardId, int limit) {
+    return template
+        .select(
+            query(where(STATUS).is(TransactionStatus.COMPLETED.name()).and(usingCard(cardId)))
+                .sort(Sort.by(Sort.Order.desc("updatedAt"), Sort.Order.asc("id")))
+                .limit(limit),
+            TransactionRow.class)
+        .map(TransactionRow::toTransaction);
+  }
+
+  @Override
+  public Flux<Transaction> findCountedCardPayments(UUID cardId, Instant from, Instant until) {
+    return template
+        .select(
+            query(
+                where("transactionType")
+                    .is(TransactionType.CARD_PAYMENT.name())
+                    .and("sourceCardId")
+                    .is(cardId)
+                    .and(CREATED_AT)
+                    .greaterThanOrEquals(from)
+                    .and(CREATED_AT)
+                    .lessThan(until)
+                    .and(STATUS)
+                    .notIn(NOT_COUNTED)),
+            TransactionRow.class)
+        .map(TransactionRow::toTransaction);
+  }
+
+  // The request data never changes. Result columns only go from empty to set, except the account
+  // a card payment is trying, which moves on; a value that is still empty is left out of the
+  // statement.
   private static Update changesOf(Transaction changed) {
     Update update =
-        Update.update("status", changed.getStatus().name())
-            .set("commandSentAt", changed.getCommandSentAt())
+        Update.update(STATUS, changed.getStatus().name())
+            .set(COMMAND_SENT_AT, changed.getCommandSentAt())
             .set("commandAttempts", changed.getCommandAttempts())
             .set("updatedAt", changed.getUpdatedAt())
             .set("version", changed.getVersion());
+    if (changed.getAccountId() != null) {
+      update = update.set("accountId", changed.getAccountId());
+    }
+    if (changed.getDestinationAccountId() != null) {
+      update = update.set("destinationAccountId", changed.getDestinationAccountId());
+    }
+    if (!changed.getCandidateAccountIds().isEmpty()) {
+      update =
+          update.set(
+              "candidateAccountIds", TransactionRow.joined(changed.getCandidateAccountIds()));
+    }
     if (changed.getFee() != null) {
       update = update.set("fee", changed.getFee());
+    }
+    if (changed.getDestinationFee() != null) {
+      update = update.set("destinationFee", changed.getDestinationFee());
     }
     if (changed.getAccountBalanceAfter() != null) {
       update = update.set("accountBalanceAfter", changed.getAccountBalanceAfter());
@@ -141,9 +193,18 @@ public class PostgresTransactionAdapter implements TransactionStorePort {
     if (request.creditId() != null) {
       filters.add(where("creditId").is(request.creditId()));
     }
+    if (request.cardId() != null) {
+      filters.add(Criteria.empty().and(usingCard(request.cardId())));
+    }
     if (request.status() != null) {
-      filters.add(where("status").is(request.status().name()));
+      filters.add(where(STATUS).is(request.status().name()));
     }
     return Criteria.from(filters);
+  }
+
+  // The card on either side of the transaction. Used inside and(...), which keeps the two
+  // alternatives together in parentheses.
+  private static Criteria usingCard(UUID cardId) {
+    return where("sourceCardId").is(cardId).or("destinationCardId").is(cardId);
   }
 }

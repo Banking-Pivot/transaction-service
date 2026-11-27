@@ -27,7 +27,7 @@ class ApplyParticipantReplyHandlerTest {
   private final ApplyParticipantReplyHandler handler =
       new ApplyParticipantReplyHandler(
           store,
-          new CommandDispatcher(publisher),
+          new CommandDispatcher(publisher, publisher),
           Clock.fixed(Transactions.START.plusSeconds(5), ZoneOffset.UTC));
 
   @Test

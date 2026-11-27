@@ -32,6 +32,10 @@
 		<spring-cloud.version>2025.1.4</spring-cloud.version>
 		<openapi-generator.version>7.26.0</openapi-generator.version>
 		<springdoc.version>3.2.0</springdoc.version>
+		<!-- SonarQube reads the coverage from the JaCoCo XML report and skips the classes the
+		     OpenAPI generator writes. -->
+		<sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+		<sonar.exclusions>**/generated/**</sonar.exclusions>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -144,6 +148,13 @@
 
 	<build>
 		<plugins>
+			<!-- Lets `mvnw clean verify sonar:sonar` find the scanner. The server address and the
+			     token go on the command line (-Dsonar.host.url, -Dsonar.login), never in here. -->
+			<plugin>
+				<groupId>org.sonarsource.scanner.maven</groupId>
+				<artifactId>sonar-maven-plugin</artifactId>
+				<version>4.0.0.4121</version>
+			</plugin>
 			<!-- Google Java Style, checked on every "mvn verify": a violation fails the build.
 			     google_checks.xml is the copy that ships with the plugin. Only the code written by
 			     hand is checked, not what the OpenAPI generator writes in target/. -->

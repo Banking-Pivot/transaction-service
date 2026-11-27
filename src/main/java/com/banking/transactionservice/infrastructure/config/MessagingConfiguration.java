@@ -9,11 +9,11 @@ import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
 
 /**
- * Kafka topics and what happens to an answer that cannot be stored.
+ * Kafka topics and what happens to a message that cannot be handled.
  *
- * <p>The three topics are declared here and in the services on the other side, with the same shape;
+ * <p>The topics are declared here and in the services on the other side, with the same shape;
  * whichever starts first creates them. Three partitions let several instances share the work, and
- * the key of every message (account, credit product or transaction) keeps its messages in one
+ * the key of every message (account, credit product, card or transaction) keeps its messages in one
  * partition, so in order.
  */
 @Configuration(proxyBeanMethods = false)
@@ -33,14 +33,30 @@ public class MessagingConfiguration {
   }
 
   @Bean
+  NewTopic cardCommandsTopic(TransactionProperties properties) {
+    return topic(properties.messaging().cardCommandsTopic());
+  }
+
+  @Bean
   NewTopic repliesTopic(TransactionProperties properties) {
     return topic(properties.messaging().repliesTopic());
   }
 
+  @Bean
+  NewTopic commandsTopic(TransactionProperties properties) {
+    return topic(properties.messaging().commandsTopic());
+  }
+
+  @Bean
+  NewTopic walletRepliesTopic(TransactionProperties properties) {
+    return topic(properties.messaging().walletRepliesTopic());
+  }
+
   /**
-   * An answer that fails to be stored (the database is down, for example) is tried three more times
-   * and then skipped with an error in the log. Skipping loses nothing: the transaction keeps
-   * waiting, its command is sent again and the service answers again.
+   * A message that fails to be handled (the database is down, for example) is tried three more
+   * times and then skipped with an error in the log. Skipping loses nothing. After an answer, the
+   * transaction keeps waiting, its command is sent again and the service answers again. After a
+   * request of Yanki Service, that service asks again.
    */
   @Bean
   CommonErrorHandler replyErrorHandler(TransactionProperties properties) {

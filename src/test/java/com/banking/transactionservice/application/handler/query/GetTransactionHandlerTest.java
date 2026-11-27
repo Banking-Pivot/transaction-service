@@ -24,7 +24,8 @@ class GetTransactionHandlerTest {
     assertThat(new GetTransactionHandler(store).execute(ID).block().getId()).isEqualTo(ID);
     assertThat(
             new ListTransactionsHandler(store)
-                .execute(new ListTransactionsQuery(PageRequest.of(null, null), null, null, null))
+                .execute(
+                    new ListTransactionsQuery(PageRequest.of(null, null), null, null, null, null))
                 .block()
                 .totalElements())
         .isEqualTo(1);

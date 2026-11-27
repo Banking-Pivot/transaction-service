@@ -28,7 +28,7 @@ class RequestCreditPaymentHandlerTest {
   private final RequestCreditPaymentHandler handler =
       new RequestCreditPaymentHandler(
           store,
-          new CommandDispatcher(publisher),
+          new CommandDispatcher(publisher, publisher),
           Clock.fixed(Transactions.START, ZoneOffset.UTC),
           () -> Transactions.REVERSAL);
 

@@ -1,29 +1,45 @@
 openapi: 3.0.3
 info:
   title: Transaction API
-  version: 1.0.0
+  version: 1.2.0
   description: |
-    API for operations that move money between products kept by different services. The first
-    one is the payment of a credit product (loan or credit card) from a bank account.
+    API for operations that move money between products kept by different services.
+    Transaction Service keeps no balances. It records what was asked and coordinates the
+    services that own each step through the event broker. There are three kinds of transaction:
 
-    Transaction Service keeps no balances. It records what was asked and coordinates the two
-    services that own the money through the event broker:
+    CREDIT_PAYMENT, the payment of a credit product (loan or credit card) from a bank account:
     1. Account Service debits the account. The debit is a normal withdrawal: it uses the monthly
        quota of the account and pays the movement fee when the quota is used up.
     2. Credit Service applies the payment to the credit product.
     3. When Credit Service rejects the payment, Account Service returns the amount and the fee
        to the account.
 
-    The request is answered at once with 202 and the transaction in PENDING_DEBIT. The result is
-    read with GET /api/v1/transactions/{transactionId}:
-    - COMPLETED: the account was debited and the credit product was paid.
-    - REJECTED: the account could not be debited. No money moved.
-    - REVERSED: the credit product rejected the payment and the debit was returned to the account.
-    - REVERSAL_FAILED: the credit product rejected the payment and the debit could not be
-      returned. The bank has to resolve it by hand.
-    - PENDING_DEBIT, PENDING_PAYMENT, PENDING_REVERSAL: still waiting for a service. A step that
-      gets no answer is sent again until it is answered; every step is idempotent, so a repeat
-      never moves money twice.
+    CARD_PAYMENT, a payment with a debit card:
+    1. Card Service says which accounts the card uses: the main one first, then the others in
+       the order they were linked.
+    2. Account Service debits the main account. Only when it has no funds for the amount and
+       the fee, the next account is tried, and so on. Any other rejection ends the payment.
+
+    A card payment has two limits, checked when the request arrives: the amount of one payment
+    and the sum of the payments of the card in one day. A payment over either is answered 422
+    and nothing is recorded. WALLET_PAYMENT is not subject to them: the wallet has its own.
+
+    WALLET_PAYMENT, the money of a Yanki wallet payment when the wallet of the payer, of the
+    payee or of both uses a debit card. Yanki Service asks for it through the event broker, not
+    through this API; it is listed here with the rest. Only the main account of each card is
+    used: the one of the source card is debited, then the one of the destination card is
+    credited, and a rejected credit returns the debit.
+
+    A request is answered at once with 202 and the transaction waiting for its first step. The
+    result is read with GET /api/v1/transactions/{transactionId}:
+    - COMPLETED: every step was done.
+    - REJECTED: a step was rejected before any money moved. See rejection.
+    - REVERSED: a later step was rejected and the debit was returned to the account.
+    - REVERSAL_FAILED: a later step was rejected and the debit could not be returned. The bank
+      has to resolve it by hand.
+    - PENDING_CARD, PENDING_DEBIT, PENDING_CREDIT, PENDING_PAYMENT, PENDING_REVERSAL: still
+      waiting for a service. A step that gets no answer is sent again until it is answered;
+      every step is idempotent, so a repeat never moves money twice.
 
     Amounts have at most two decimals. Instants are UTC.
 servers:
@@ -40,7 +56,9 @@ paths:
       description: |
         Records the payment and starts it. The account and the credit product are not checked
         here: the services that own them accept or reject their step, and the reason is read
-        from the transaction. See OperationId for idempotency.
+        from the transaction. The account and the credit product can belong to different
+        customers: anybody can pay the credit product of somebody else. See OperationId for
+        idempotency.
       requestBody:
         required: true
         content:
@@ -79,12 +97,101 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/transactions/card-payments:
+    post:
+      tags: [Transactions]
+      operationId: requestCardPayment
+      summary: Pay with a debit card
+      description: |
+        Records the payment and starts it. The card and its accounts are not checked here: Card
+        Service and Account Service accept or reject their step, and the reason is read from the
+        transaction. The amount leaves the main account of the card, or the next linked account
+        with enough funds. See OperationId for idempotency.
+
+        Two limits are checked before anything is recorded or sent:
+        - One payment cannot be above the limit per card payment (5000.00 unless the bank
+          configures another): 422 CARD_PAYMENT_LIMIT_EXCEEDED.
+        - The payments of the card requested in the same day, plus this one, cannot be above the
+          daily limit of the card (10000.00 unless configured): 422 CARD_DAILY_LIMIT_EXCEEDED.
+          The day is the calendar day of the bank (America/Lima unless configured). Payments
+          that ended REJECTED or REVERSED do not count; payments still in progress do. Amounts
+          are added as numbers, whatever their currency.
+
+        A repeat of a recorded operationId is answered with its transaction and the limits are
+        not checked again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CardPaymentRequest'
+            example:
+              operationId: 7b9d1f3a-5c7e-4a2b-8d4f-6a8c0e2b4d6f
+              cardId: 2c4e6a8b-0d1f-4a3c-9e5b-7d9f1b3c5e7a
+              amount: 80.00
+              currency: PEN
+              description: Grocery store
+      responses:
+        '202':
+          description: |
+            The payment was recorded and is being processed, or it was already recorded with the
+            same data (then Idempotent-Replayed is true and the body is its current state).
+          headers:
+            Location:
+              description: Where to read the transaction.
+              schema:
+                type: string
+              example: /api/v1/transactions/7b9d1f3a-5c7e-4a2b-8d4f-6a8c0e2b4d6f
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/CardLimitExceeded'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/transactions/cards/{cardId}/movements/latest:
+    parameters:
+      - name: cardId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Transactions]
+      operationId: getLatestCardMovements
+      summary: Read the last ten movements of a debit card
+      description: |
+        The last ten completed transactions that moved money through the card, newest first:
+        payments with the card, and wallet payments that took the money from its main account
+        or put it there. The card is not looked up: a card that moved no money, or that does
+        not exist, has no items.
+      responses:
+        '200':
+          description: The movements, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestCardMovementsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/transactions/{transactionId}:
     parameters:
       - name: transactionId
         in: path
         required: true
-        description: The operationId the transaction was requested with.
+        description: The ID the transaction was requested with.
         schema:
           type: string
           format: uuid
@@ -117,13 +224,19 @@ paths:
         - $ref: '#/components/parameters/Size'
         - name: accountId
           in: query
-          description: Returns the transactions that debit this account.
+          description: Returns the transactions that debit, or tried to debit last, this account.
           schema:
             type: string
             format: uuid
         - name: creditId
           in: query
           description: Returns the transactions that pay this credit product.
+          schema:
+            type: string
+            format: uuid
+        - name: cardId
+          in: query
+          description: Returns the transactions whose source or destination card is this one.
           schema:
             type: string
             format: uuid
@@ -206,6 +319,30 @@ components:
             message: The operationId was already used with different data.
             timestamp: '2026-11-20T15:00:00Z'
             path: /api/v1/transactions/credit-payments
+    CardLimitExceeded:
+      description: |
+        The payment is above the limit of one card payment (CARD_PAYMENT_LIMIT_EXCEEDED) or
+        takes the card above its limit of the day (CARD_DAILY_LIMIT_EXCEEDED). Nothing was
+        recorded.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            paymentLimit:
+              summary: Above the limit of one payment
+              value:
+                code: CARD_PAYMENT_LIMIT_EXCEEDED
+                message: The amount exceeds the limit of 5000.00 per card payment.
+                timestamp: '2026-11-20T15:00:00Z'
+                path: /api/v1/transactions/card-payments
+            dailyLimit:
+              summary: Above the limit of the day
+              value:
+                code: CARD_DAILY_LIMIT_EXCEEDED
+                message: The payment exceeds the limit of 10000.00 per day of the card.
+                timestamp: '2026-11-20T15:00:00Z'
+                path: /api/v1/transactions/card-payments
     UnsupportedMediaType:
       description: The request body is not application/json (UNSUPPORTED_MEDIA_TYPE).
       content:
@@ -225,11 +362,11 @@ components:
       format: uuid
       description: |
         Idempotency key generated by the client, one per intended payment. It becomes the ID of
-        the transaction, and the debit of the account and the payment of the credit product are
-        recorded under it in their services. Repeating the request with the same data returns
-        202 with the current state of the transaction and starts nothing new. The same key with
-        a different account, credit product, amount, currency or description returns 409
-        OPERATION_ID_CONFLICT.
+        the transaction, and the steps of the transaction are recorded in their services under
+        it or under keys derived from it. Repeating the request with the same data returns 202
+        with the current state of the transaction and starts nothing new. The same key with
+        other data (another kind of payment, account, card, credit product, amount, currency or
+        description) returns 409 OPERATION_ID_CONFLICT.
       example: 4a6c8e0b-2d4f-4b1a-9c3e-5f7a9b1c3d5e
     CreditPaymentRequest:
       title: CreditPaymentRequest
@@ -264,25 +401,70 @@ components:
           maxLength: 140
           description: Free text recorded with the movements of the account and the credit product.
           example: November installment
+    CardPaymentRequest:
+      title: CardPaymentRequest
+      type: object
+      additionalProperties: false
+      required: [operationId, cardId, amount, currency]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        cardId:
+          type: string
+          format: uuid
+          description: Debit card the payment is made with.
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          x-field-extra-annotation: '@jakarta.validation.constraints.Digits(integer = 12, fraction = 2)'
+          description: Positive amount with at most two decimals.
+          example: 80.00
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        description:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: Free text recorded with the movement of the account.
+          example: Grocery store
     TransactionResponse:
       title: TransactionResponse
       type: object
-      required: [id, type, status, accountId, creditId, amount, currency, createdAt, updatedAt]
+      required: [id, type, status, amount, currency, createdAt, updatedAt]
       properties:
         id:
           type: string
           format: uuid
-          description: The operationId of the request.
+          description: The operationId of the request, or the ID Yanki Service gave the movement.
         type:
           $ref: '#/components/schemas/TransactionType'
         status:
           $ref: '#/components/schemas/TransactionStatus'
+        sourceCardId:
+          type: string
+          format: uuid
+          description: Debit card the money leaves from. In CARD_PAYMENT, and in WALLET_PAYMENT when the payer uses a card.
+        destinationCardId:
+          type: string
+          format: uuid
+          description: Debit card the money goes to. In WALLET_PAYMENT when the payee uses a card.
         accountId:
           type: string
           format: uuid
+          description: |
+            Account that is debited. With a card it is known once Card Service answered, and in
+            a CARD_PAYMENT it is the account being tried or the one that was finally debited.
+        destinationAccountId:
+          type: string
+          format: uuid
+          description: Account that is credited, the main one of the destination card.
         creditId:
           type: string
           format: uuid
+          description: Credit product that is paid. Only in CREDIT_PAYMENT.
         amount:
           type: number
           example: 150.00
@@ -296,6 +478,10 @@ components:
             Movement fee the account paid for the debit. Present once the account was debited;
             a reversal returns it together with the amount.
           example: 0.00
+        destinationFee:
+          type: number
+          description: Movement fee the destination account paid for the credit. Present once it was credited.
+          example: 0.00
         accountBalanceAfter:
           type: number
           description: |
@@ -304,7 +490,7 @@ components:
           example: 350.00
         debtAfter:
           type: number
-          description: Outstanding debt of the credit product after the payment. Only when COMPLETED.
+          description: Outstanding debt of the credit product after the payment. Only in a COMPLETED CREDIT_PAYMENT.
           example: 850.00
         rejection:
           $ref: '#/components/schemas/Rejection'
@@ -344,6 +530,55 @@ components:
         message:
           type: string
           example: The account is closed.
+    LatestCardMovementsResponse:
+      title: LatestCardMovementsResponse
+      type: object
+      required: [cardId, items]
+      properties:
+        cardId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CardMovementResponse'
+    CardMovementResponse:
+      title: CardMovementResponse
+      type: object
+      required: [transactionId, type, direction, accountId, amount, fee, currency, occurredAt]
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        direction:
+          $ref: '#/components/schemas/MovementDirection'
+        accountId:
+          type: string
+          format: uuid
+          description: Account of the card the money left from or entered.
+        amount:
+          type: number
+          example: 80.00
+        fee:
+          type: number
+          description: Movement fee that account paid.
+          example: 0.00
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        description:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+          description: When the transaction completed.
+    MovementDirection:
+      title: MovementDirection
+      type: string
+      enum: [DEBIT, CREDIT]
+      description: DEBIT when the money left the account of the card; CREDIT when it entered it.
     TransactionPageResponse:
       title: TransactionPageResponse
       type: object
@@ -401,16 +636,28 @@ components:
     TransactionType:
       title: TransactionType
       type: string
-      enum: [CREDIT_PAYMENT]
+      enum: [CREDIT_PAYMENT, CARD_PAYMENT, WALLET_PAYMENT]
     TransactionStatus:
       title: TransactionStatus
       type: string
-      enum: [PENDING_DEBIT, PENDING_PAYMENT, PENDING_REVERSAL, COMPLETED, REJECTED, REVERSED, REVERSAL_FAILED]
+      enum:
+        - PENDING_CARD
+        - PENDING_DEBIT
+        - PENDING_CREDIT
+        - PENDING_PAYMENT
+        - PENDING_REVERSAL
+        - COMPLETED
+        - REJECTED
+        - REVERSED
+        - REVERSAL_FAILED
     RejectedStep:
       title: RejectedStep
       type: string
-      enum: [DEBIT, PAYMENT]
-      description: DEBIT when Account Service rejected the debit; PAYMENT when Credit Service rejected the payment.
+      enum: [CARD, DEBIT, CREDIT, PAYMENT]
+      description: |
+        CARD when Card Service rejected the card; DEBIT when Account Service rejected the debit;
+        CREDIT when Account Service rejected the credit; PAYMENT when Credit Service rejected
+        the payment.
     CurrencyCode:
       title: CurrencyCode
       type: string

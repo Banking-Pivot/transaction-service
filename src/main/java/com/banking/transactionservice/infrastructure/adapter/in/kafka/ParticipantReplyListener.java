@@ -4,11 +4,9 @@ import com.banking.transactionservice.application.port.in.ApplyParticipantReplyU
 import com.banking.transactionservice.domain.model.ParticipantReply;
 import com.banking.transactionservice.infrastructure.config.TransactionProperties;
 import com.banking.transactionservice.infrastructure.correlation.CorrelationId;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.header.Header;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -18,8 +16,8 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Receives the answers of Account Service and Credit Service and applies them to their
- * transactions.
+ * Receives the answers of Account Service, Credit Service and Card Service and applies them to
+ * their transactions.
  *
  * <p>The method waits until the answer is stored and the next command is out before it returns. It
  * runs on the thread of the Kafka consumer, not on one that serves requests, so waiting there is
@@ -61,7 +59,7 @@ public class ParticipantReplyListener {
    */
   @KafkaListener(topics = "#{__listener.repliesTopic}")
   public void onReply(ConsumerRecord<String, String> message) {
-    String correlationId = CorrelationId.accept(correlationHeader(message));
+    String correlationId = MessageCorrelation.of(message);
     try (MDC.MDCCloseable ignored = MDC.putCloseable(CorrelationId.KEY, correlationId)) {
       read(message)
           .ifPresent(
@@ -86,12 +84,5 @@ public class ParticipantReplyListener {
           unreadable.getClass().getSimpleName());
       return Optional.empty();
     }
-  }
-
-  private static String correlationHeader(ConsumerRecord<String, String> message) {
-    Header header = message.headers().lastHeader(CorrelationId.HEADER);
-    return header == null || header.value() == null
-        ? null
-        : new String(header.value(), StandardCharsets.UTF_8);
   }
 }

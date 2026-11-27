@@ -82,7 +82,7 @@ class ResendPendingCommandsHandlerTest {
   private ResendPendingCommandsHandler handlerAt(long secondsAfterStart, int batchSize) {
     return new ResendPendingCommandsHandler(
         store,
-        new CommandDispatcher(publisher),
+        new CommandDispatcher(publisher, publisher),
         Clock.fixed(Transactions.START.plusSeconds(secondsAfterStart), ZoneOffset.UTC),
         Duration.ofSeconds(30),
         batchSize);
