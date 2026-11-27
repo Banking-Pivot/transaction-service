@@ -31,17 +31,17 @@ import lombok.Getter;
  * that owns it. Which steps it has depends on its type:
  *
  * <pre>
- * CREDIT_PAYMENT   PENDING_DEBIT ─▶ PENDING_PAYMENT ─▶ COMPLETED
- * CARD_PAYMENT     PENDING_CARD ─▶ PENDING_DEBIT ─▶ COMPLETED
- * WALLET_PAYMENT   PENDING_CARD ─▶ [PENDING_DEBIT] ─▶ [PENDING_CREDIT] ─▶ COMPLETED
+ * CREDIT_PAYMENT   PENDING_DEBIT -> PENDING_PAYMENT -> COMPLETED
+ * CARD_PAYMENT     PENDING_CARD -> PENDING_DEBIT -> COMPLETED
+ * WALLET_PAYMENT   PENDING_CARD -> [PENDING_DEBIT] -> [PENDING_CREDIT] -> COMPLETED
  * </pre>
  *
  * <p>A step that is refused ends the transaction as REJECTED when no money was taken yet. When the
  * account was already debited and the step after it is refused, the debit goes back:
  *
  * <pre>
- * PENDING_PAYMENT or PENDING_CREDIT ──rejected──▶ PENDING_REVERSAL ──reversed──▶ REVERSED
- *                                                       └─rejected─▶ REVERSAL_FAILED
+ * PENDING_PAYMENT or PENDING_CREDIT --rejected--> PENDING_REVERSAL --reversed--> REVERSED
+ *                                                       +-rejected-> REVERSAL_FAILED
  * </pre>
  *
  * <p>A card payment tries the main account of the card first and, only when that account does not
